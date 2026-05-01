@@ -1,8 +1,8 @@
 # Signet Memory Provider
 
 [Signet](https://github.com/Signet-AI/signetai) is a portable context layer for
-AI agents. It gives Hermes durable memory that follows the user across tools,
-sessions, and runtimes instead of living only inside one profile.
+AI agents. It gives Hermes access to a workspace-backed memory record that can
+travel across tools, sessions, and runtimes.
 
 This provider sends Hermes conversation lifecycle events to the local Signet
 daemon. Signet handles persistence, audit history, structured context,
@@ -36,11 +36,12 @@ registers the configured Hermes profile with Signet when possible.
 
 ## Why Signet
 
-Signet is built around a durable context substrate instead of a plugin-local
-memory bucket. Hermes gets a small integration surface, while Signet owns the
-memory system and can serve the same record to other harnesses.
+Signet is built around an agent workspace rather than a plugin-local memory
+bucket. The workspace keeps the durable record; the daemon indexes, searches,
+summarizes, and structures it. Hermes gets a small integration surface while
+Signet owns the memory system around it.
 
-- **Portable** - memory is not trapped in a single Hermes profile or runtime.
+- **Portable** - memory can follow the user between Hermes and other harnesses.
 - **Inspectable** - the workspace includes readable files such as `MEMORY.md`,
   plus SQLite at `$SIGNET_WORKSPACE/memory/memories.db`.
 - **Auditable** - SQLite is the query, indexing, audit, and mutation layer over
@@ -56,12 +57,10 @@ memory system and can serve the same record to other harnesses.
 - **Runtime-light** - heavy storage and processing stay in the Signet daemon, so
   Hermes does not need to embed Signet's memory engine.
 
-Signet can also organize extracted entities and relationships into a navigable
-graph, but the graph and retrieval internals exist to support context selection
-rather than acting as the product by themselves. Cognitive behavioral modeling
-and fine-grained recall are byproducts of that structure: the daemon can reason
-over what has been remembered and how it relates, without forcing Hermes to
-manage a parallel representation system.
+The important product boundary is that the workspace stays durable and
+inspectable while SQLite, search indexes, graph structure, summaries, and recall
+surfaces remain service layers around it. Hermes can use the memory system
+without taking responsibility for that substrate.
 
 ## Config
 
