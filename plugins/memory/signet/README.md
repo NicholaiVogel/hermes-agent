@@ -1,26 +1,22 @@
 # Signet Memory Provider
 
 [Signet](https://github.com/Signet-AI/signetai) is a portable context layer for
-AI agents. It keeps durable memory outside any one harness so Hermes can share
-the same long-lived record as other tools without embedding Signet's storage
-engine inside the Hermes process.
+AI agents. It gives Hermes a durable memory record that follows the user across
+tools instead of living only inside one provider, one profile, or one runtime.
 
-The record stays inspectable: Signet keeps readable workspace files such as
-`MEMORY.md` and stores operational memory in SQLite at
-`$SIGNET_WORKSPACE/memory/memories.db`. SQLite is the query, indexing, audit,
-and mutation layer over that durable memory state. Signet can also structure
-extracted entities and relations into a navigable graph, but the graph and
-retrieval internals are support layers for context selection, not the product
-by themselves.
-
-This provider is the Hermes bridge. It calls the local Signet daemon during
-Hermes session lifecycle events and exposes Signet's memory tools to Hermes
-when explicit recall or memory repair is needed.
+This provider is the Hermes bridge. Hermes sends conversation lifecycle events
+to the local Signet daemon, and Signet handles persistence, audit history,
+structured context, cognitive behavioral modeling, summaries, and recall
+outside the Hermes process.
 
 ## Requirements
 
-- Signet daemon running on localhost:3850 by default
-- Install Signet with `npm install -g signetai` or `bun add -g signetai`
+- Signet installed with `npm install -g signetai` or `bun add -g signetai`
+- Signet daemon running on `http://localhost:3850` by default
+
+```bash
+signet daemon start
+```
 
 ## Setup
 
@@ -35,20 +31,61 @@ hermes config set memory.provider signet
 signet daemon start
 ```
 
+The setup wizard checks the daemon, saves Hermes-local Signet settings, and
+registers the configured Hermes profile with Signet when possible.
+
+## How It Differs
+
+The other bundled Hermes memory provider READMEs generally describe how Hermes
+talks to a provider-specific SDK, API, CLI, daemon, or local store. Signet's
+distinction is the boundary it creates: Hermes gets a small integration surface,
+while Signet owns the durable context substrate and can serve the same record to
+other harnesses.
+
+That makes the integration useful in a few practical ways:
+
+- **Portable** - memory is not trapped in a single Hermes profile or runtime.
+- **Inspectable** - the workspace includes readable files such as `MEMORY.md`,
+  plus SQLite at `$SIGNET_WORKSPACE/memory/memories.db`.
+- **Auditable** - SQLite is the query, indexing, audit, and mutation layer over
+  durable memory state.
+- **Cognitive behavioral modeling** - user understanding emerges from
+  accumulated memories, preferences, decisions, entities, and relationships
+  instead of a separate profile-management layer.
+- **Fine-grained recall** - Hermes gets simple flat hybrid recall tools, while
+  Signet also keeps navigable and tunable recall surfaces for more specific
+  searches through memory structure.
+- **Lifecycle-aware** - Signet receives session start, prompt, turn, compaction,
+  delegation, and session-end events, not just isolated search/store calls.
+- **Runtime-light** - heavy storage and processing stay in the Signet daemon, so
+  Hermes does not need to embed Signet's memory engine.
+
+Signet can also organize extracted entities and relationships into a navigable
+graph, but the graph and retrieval internals exist to support context selection
+rather than acting as the product by themselves. Cognitive behavioral modeling
+and fine-grained recall are byproducts of that structure: the daemon can reason
+over what has been remembered and how it relates, without forcing Hermes to
+manage a parallel representation system.
+
 ## Config
 
-`hermes memory setup` saves `daemon_url` and `agent_id` to
-`$HERMES_HOME/signet.json`. Environment variables override that file at
-runtime.
+Config file: `$HERMES_HOME/signet.json`
 
-Environment variables:
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon_url` | `http://localhost:3850` | Signet daemon base URL |
+| `agent_id` | `hermes-agent` | Signet agent scope used for Hermes memory |
 
-- `SIGNET_DAEMON_URL` - Full daemon URL (default: `http://localhost:3850`)
-- `SIGNET_HOST` / `SIGNET_PORT` - Host and port separately
-- `SIGNET_AGENT_ID` - Agent scope identifier (default: `hermes-agent`)
-- `SIGNET_AGENT_WORKSPACE` - Optional named-agent workspace path
-- `SIGNET_AGENT_READ_POLICY` - Optional named-agent memory policy for first registration: `shared`, `isolated`, or `group`
-- `SIGNET_AGENT_POLICY_GROUP` - Required when `SIGNET_AGENT_READ_POLICY=group`
+Environment variables override the config file:
+
+| Env Var | Description |
+|---------|-------------|
+| `SIGNET_DAEMON_URL` | Full daemon URL |
+| `SIGNET_HOST` / `SIGNET_PORT` | Host and port separately |
+| `SIGNET_AGENT_ID` | Agent scope identifier |
+| `SIGNET_AGENT_WORKSPACE` | Optional named-agent workspace path for first registration |
+| `SIGNET_AGENT_READ_POLICY` | Optional named-agent memory policy: `shared`, `isolated`, or `group` |
+| `SIGNET_AGENT_POLICY_GROUP` | Required when `SIGNET_AGENT_READ_POLICY=group` |
 
 ## Tools
 
@@ -63,27 +100,23 @@ Environment variables:
 | `recall` / `remember` | Compatibility aliases for search/store |
 
 `memory_store` accepts plain content plus optional metadata such as `type`,
-`importance`, `tags`, `pinned`, `project`, recall hints, source transcript
-text, and pre-structured entity/aspect data.
+`importance`, `tags`, `pinned`, `project`, recall hints, source transcript text,
+and pre-structured entity/aspect data.
 
 ## Session Lifecycle
 
-The provider maps Hermes lifecycle events onto Signet daemon hooks:
+When enabled, Hermes calls this provider at key points in a conversation:
 
-1. **Session start** - Opens a Signet session and asks the daemon for the
-   initial memory block Hermes should make available to the model.
-2. **User prompt submit** - Sends the latest user message to Signet before the
-   next model step so Signet can return relevant context from the durable
-   record.
-3. **Turn sync** - Accumulates the assistant side of the exchange so the
-   session transcript is complete.
-4. **Pre-compression** - Asks Signet for guidance before Hermes summarizes or
-   compacts a long context.
-5. **Compaction complete** - Sends the completed summary back to Signet as a
-   first-class session artifact.
-6. **Session end** - Sends the cleaned conversation transcript to Signet so the
-   daemon can queue durable memory processing.
-7. **Delegation** - Records useful delegated-task outcomes through Signet.
+| Event | What the provider sends to Signet |
+|-------|-----------------------------------|
+| Session start | Opens a Signet session and asks for the initial memory block Hermes should make available |
+| User prompt submit | Sends the latest user message before the next model step so Signet can return relevant context |
+| Turn sync | Adds the assistant response to the in-progress transcript |
+| Pre-compression | Asks Signet what should be preserved before Hermes compacts a long context |
+| Compaction complete | Sends the completed summary back as a session artifact |
+| Session end | Sends the cleaned transcript so Signet can queue durable memory processing |
+| Delegation | Records useful delegated-task outcomes through Signet |
 
-All heavy storage and processing stays in the Signet daemon. Hermes only needs
-this provider, stdlib HTTP calls, and a configured daemon URL.
+Heavy processing stays in the Signet daemon. The Hermes plugin uses stdlib HTTP
+calls and keeps background writes bounded so session shutdown can drain pending
+work before the process exits.
