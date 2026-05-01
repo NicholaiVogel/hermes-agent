@@ -522,6 +522,41 @@ class TestPluginMemoryDiscovery:
         assert captured["agent_id"] == "env-agent"
         assert captured["base_url"] == "http://env-signet:3850"
 
+    def test_signet_initialize_fallback_uses_profile_aware_hermes_home(self, tmp_path, monkeypatch):
+        """Missing hermes_home should still use Hermes' profile-aware resolver."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.delenv("SIGNET_DAEMON_URL", raising=False)
+        monkeypatch.delenv("SIGNET_HOST", raising=False)
+        monkeypatch.delenv("SIGNET_PORT", raising=False)
+        monkeypatch.delenv("SIGNET_AGENT_ID", raising=False)
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://profile-signet:3850",
+            "agent_id": "profile-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+        monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize("session-1", cwd=str(tmp_path))
+
+        assert captured["agent_id"] == "profile-agent"
+        assert captured["base_url"] == "http://profile-signet:3850"
+
     def test_signet_prefetch_ignores_stale_thread_result(self):
         """Older background recalls must not overwrite newer turn context."""
         from plugins.memory import signet as signet_mod
@@ -562,6 +597,32 @@ class TestPluginMemoryDiscovery:
         old_release.set()
         assert old_done.wait(timeout=2)
         assert provider.prefetch("next") == ""
+
+    def test_signet_shutdown_waits_for_persistence_threads(self):
+        """Explicit memory writes should be drained briefly during shutdown."""
+        from plugins.memory import signet as signet_mod
+
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        class FakeSignetClient:
+            def remember(self, content, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                finished.set()
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+
+        provider.on_memory_write("add", "memory", "durable fact")
+        assert started.wait(timeout=2)
+        release.set()
+        provider.shutdown()
+
+        assert finished.is_set()
+        assert provider._background_threads == []
 
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""

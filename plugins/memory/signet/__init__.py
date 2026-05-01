@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -291,6 +292,11 @@ def _load_signet_config(hermes_home: str) -> Dict[str, str]:
     }
 
 
+def _default_hermes_home() -> str:
+    from hermes_constants import get_hermes_home
+    return str(get_hermes_home())
+
+
 def _resolve_agent_workspace(agent_id: str, kwargs: Dict[str, Any]) -> str:
     """Resolve the project/workspace path sent to Signet hooks.
 
@@ -329,6 +335,8 @@ class SignetMemoryProvider(MemoryProvider):
         self._prefetch_result = ""
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread: Optional[threading.Thread] = None
+        self._background_threads: List[threading.Thread] = []
+        self._background_lock = threading.Lock()
         self._turn_count = 0
         self._last_user_message = ""
         self._last_assistant_message = ""
@@ -393,6 +401,17 @@ class SignetMemoryProvider(MemoryProvider):
             },
         ]
 
+    def _start_background_thread(self, target, name: str) -> threading.Thread:
+        """Start a persistence worker and track it for shutdown."""
+        thread = threading.Thread(target=target, daemon=True, name=name)
+        with self._background_lock:
+            self._background_threads = [
+                t for t in self._background_threads if t.is_alive()
+            ]
+            self._background_threads.append(thread)
+        thread.start()
+        return thread
+
     def initialize(self, session_id: str, **kwargs) -> None:
         """Connect to the Signet daemon and call session-start hook.
 
@@ -410,7 +429,7 @@ class SignetMemoryProvider(MemoryProvider):
             logger.debug("Signet skipped: cron/flush context")
             return
 
-        hermes_home = str(kwargs.get("hermes_home", Path.home() / ".hermes"))
+        hermes_home = str(kwargs.get("hermes_home") or _default_hermes_home())
         cfg = _load_signet_config(hermes_home)
         self._config = cfg
         agent_id = cfg["agent_id"]
@@ -604,8 +623,7 @@ class SignetMemoryProvider(MemoryProvider):
             except Exception as e:
                 logger.debug("Signet memory mirror failed: %s", e)
 
-        t = threading.Thread(target=_write, daemon=True, name="signet-memwrite")
-        t.start()
+        self._start_background_thread(_write, "signet-memwrite")
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         """Call session-end hook to trigger memory extraction from transcript."""
@@ -717,8 +735,7 @@ class SignetMemoryProvider(MemoryProvider):
             except Exception as e:
                 logger.debug("Signet compaction-complete failed: %s", e)
 
-        t = threading.Thread(target=_run, daemon=True, name="signet-compact")
-        t.start()
+        self._start_background_thread(_run, "signet-compact")
 
     def on_delegation(self, task: str, result: str, *,
                       child_session_id: str = "", **kwargs) -> None:
@@ -739,8 +756,7 @@ class SignetMemoryProvider(MemoryProvider):
             except Exception as e:
                 logger.debug("Signet delegation memory failed: %s", e)
 
-        t = threading.Thread(target=_run, daemon=True, name="signet-delegation")
-        t.start()
+        self._start_background_thread(_run, "signet-delegation")
 
     def _fire_checkpoint(self) -> None:
         """Fire a checkpoint-extract for long-running sessions."""
@@ -773,8 +789,7 @@ class SignetMemoryProvider(MemoryProvider):
             except Exception as e:
                 logger.debug("Signet checkpoint failed: %s", e)
 
-        t = threading.Thread(target=_run, daemon=True, name="signet-checkpoint")
-        t.start()
+        self._start_background_thread(_run, "signet-checkpoint")
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Return Signet tool schemas.
@@ -947,6 +962,18 @@ class SignetMemoryProvider(MemoryProvider):
         """Clean shutdown — wait for background threads."""
         if self._prefetch_thread and self._prefetch_thread.is_alive():
             self._prefetch_thread.join(timeout=5.0)
+        deadline = time.monotonic() + 5.0
+        with self._background_lock:
+            threads = [t for t in self._background_threads if t.is_alive()]
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
+        with self._background_lock:
+            self._background_threads = [
+                t for t in self._background_threads if t.is_alive()
+            ]
 
 
 # ---------------------------------------------------------------------------
