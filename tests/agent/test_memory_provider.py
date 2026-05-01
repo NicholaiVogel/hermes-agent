@@ -1,6 +1,7 @@
 """Tests for the memory provider interface, manager, and builtin provider."""
 
 import json
+import threading
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -396,6 +397,365 @@ class TestPluginMemoryDiscovery:
         assert p is not None
         assert p.name == "holographic"
         assert p.is_available()
+
+    def test_discover_finds_signet_provider(self):
+        """Signet is available as a bundled memory provider."""
+        from plugins.memory import discover_memory_providers
+        providers = discover_memory_providers()
+        names = [name for name, _, _ in providers]
+        assert "signet" in names
+
+    def test_load_signet_provider_without_daemon(self):
+        """Signet provider loads even when the daemon is not connected."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+
+        assert p is not None
+        assert p.name == "signet"
+
+    def test_signet_exposes_stable_tool_schemas(self):
+        """Signet tool schemas are exposed before provider initialization."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+        assert p is not None
+
+        tool_names = {schema["name"] for schema in p.get_tool_schemas()}
+        assert tool_names == {
+            "memory_search",
+            "memory_store",
+            "memory_get",
+            "memory_list",
+            "memory_modify",
+            "memory_forget",
+            "recall",
+            "remember",
+        }
+
+    def test_signet_tools_route_through_memory_manager(self):
+        """MemoryManager recognizes Signet tools instead of returning unknown."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+        assert p is not None
+
+        mgr = MemoryManager()
+        mgr.add_provider(p)
+
+        assert mgr.has_tool("memory_search")
+        result = json.loads(mgr.handle_tool_call("memory_search", {"query": "alice"}))
+        assert result == {"error": "Signet daemon is not connected."}
+
+    def test_signet_initialize_reads_saved_setup_config(self, tmp_path, monkeypatch):
+        """Values saved by `hermes memory setup` drive runtime client config."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.delenv("SIGNET_DAEMON_URL", raising=False)
+        monkeypatch.delenv("SIGNET_HOST", raising=False)
+        monkeypatch.delenv("SIGNET_PORT", raising=False)
+        monkeypatch.delenv("SIGNET_AGENT_ID", raising=False)
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://signet.local:3850",
+            "agent_id": "reviewer-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["harness"] = harness
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                captured["session_key"] = session_key
+                captured["project"] = project
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize(
+            "session-1",
+            hermes_home=str(tmp_path),
+            cwd=str(tmp_path),
+        )
+
+        assert captured["agent_id"] == "reviewer-agent"
+        assert captured["harness"] == "hermes-agent"
+        assert captured["base_url"] == "http://signet.local:3850"
+        assert captured["session_key"] == "session-1"
+
+    def test_signet_env_overrides_saved_setup_config(self, tmp_path, monkeypatch):
+        """Runtime env vars keep precedence over saved Signet setup values."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.setenv("SIGNET_DAEMON_URL", "http://env-signet:3850")
+        monkeypatch.setenv("SIGNET_AGENT_ID", "env-agent")
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://saved-signet:3850",
+            "agent_id": "saved-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize("session-1", hermes_home=str(tmp_path), cwd=str(tmp_path))
+
+        assert captured["agent_id"] == "env-agent"
+        assert captured["base_url"] == "http://env-signet:3850"
+
+    def test_signet_initialize_fallback_uses_profile_aware_hermes_home(self, tmp_path, monkeypatch):
+        """Missing hermes_home should still use Hermes' profile-aware resolver."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.delenv("SIGNET_DAEMON_URL", raising=False)
+        monkeypatch.delenv("SIGNET_HOST", raising=False)
+        monkeypatch.delenv("SIGNET_PORT", raising=False)
+        monkeypatch.delenv("SIGNET_AGENT_ID", raising=False)
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://profile-signet:3850",
+            "agent_id": "profile-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+        monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize("session-1", cwd=str(tmp_path))
+
+        assert captured["agent_id"] == "profile-agent"
+        assert captured["base_url"] == "http://profile-signet:3850"
+
+    def test_signet_prefetch_ignores_stale_thread_result(self):
+        """Older background recalls must not overwrite newer turn context."""
+        from plugins.memory import signet as signet_mod
+
+        old_started = threading.Event()
+        old_release = threading.Event()
+        old_done = threading.Event()
+
+        class FakeSignetClient:
+            def user_prompt_submit(
+                self,
+                session_key,
+                user_message,
+                *,
+                last_assistant_message="",
+                project="",
+            ):
+                if user_message == "old":
+                    old_started.set()
+                    old_release.wait(timeout=2)
+                    old_done.set()
+                    return {"inject": "old context"}
+                return {"inject": "new context"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._session_key = "session-1"
+        provider._project = ""
+
+        provider.queue_prefetch("old")
+        assert old_started.wait(timeout=2)
+        provider.queue_prefetch("new")
+        assert provider._prefetch_thread is not None
+        provider._prefetch_thread.join(timeout=2)
+
+        assert provider.prefetch("next") == "new context"
+
+        old_release.set()
+        assert old_done.wait(timeout=2)
+        assert provider.prefetch("next") == ""
+
+    def test_signet_shutdown_waits_for_persistence_threads(self):
+        """Explicit memory writes should be drained briefly during shutdown."""
+        from plugins.memory import signet as signet_mod
+
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        class FakeSignetClient:
+            def remember(self, content, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                finished.set()
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+
+        provider.on_memory_write("add", "memory", "durable fact")
+        assert started.wait(timeout=2)
+        release.set()
+        provider.shutdown()
+
+        assert finished.is_set()
+        assert provider._background_threads == []
+
+    def test_signet_checkpoint_extract_sends_transcript_delta(self):
+        """Periodic checkpoints should not resend already-submitted turns."""
+        from plugins.memory import signet as signet_mod
+
+        captured = []
+
+        class FakeSignetClient:
+            def checkpoint_extract(self, session_key, transcript, *, project=""):
+                captured.append({
+                    "session_key": session_key,
+                    "transcript": transcript,
+                    "project": project,
+                })
+                return {"queued": True}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._session_key = "session-1"
+        provider._project = "/repo/project"
+        provider._transcript_lines = [
+            f"user: {'a' * 600}",
+            f"assistant: {'b' * 600}",
+        ]
+
+        provider._fire_checkpoint()
+        provider.shutdown()
+
+        provider._transcript_lines.extend([
+            f"user: {'c' * 600}",
+            f"assistant: {'d' * 600}",
+        ])
+        provider._fire_checkpoint()
+        provider.shutdown()
+
+        assert len(captured) == 2
+        assert "a" * 600 in captured[0]["transcript"]
+        assert "b" * 600 in captured[0]["transcript"]
+        assert "c" * 600 not in captured[0]["transcript"]
+        assert "c" * 600 in captured[1]["transcript"]
+        assert "d" * 600 in captured[1]["transcript"]
+        assert "a" * 600 not in captured[1]["transcript"]
+        assert captured[1]["project"] == "/repo/project"
+
+    def test_signet_builtin_memory_write_uses_active_project(self):
+        """Built-in Hermes memory mirrors should stay in the initialized scope."""
+        from plugins.memory import signet as signet_mod
+
+        captured = {}
+
+        class FakeSignetClient:
+            def remember(self, content, **kwargs):
+                captured["content"] = content
+                captured["kwargs"] = kwargs
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._project = "/repo/project"
+
+        provider.on_memory_write("add", "memory", "durable fact")
+        provider.shutdown()
+
+        assert captured["content"] == "durable fact"
+        assert captured["kwargs"]["project"] == "/repo/project"
+
+    def test_signet_tool_calls_ignore_model_supplied_project(self):
+        """Model-controlled tool args must not override initialized scope."""
+        from plugins.memory import signet as signet_mod
+
+        captured = {}
+
+        class FakeSignetClient:
+            def recall(self, query, **kwargs):
+                captured["recall"] = kwargs
+                return {"results": []}
+
+            def remember(self, content, **kwargs):
+                captured["remember"] = kwargs
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._project = "/safe/project"
+
+        search = json.loads(provider.handle_tool_call(
+            "memory_search",
+            {"query": "fact", "project": "/other/project"},
+        ))
+        store = json.loads(provider.handle_tool_call(
+            "memory_store",
+            {"content": "fact", "project": "/other/project"},
+        ))
+
+        assert search == {"results": []}
+        assert store == {"result": "Memory saved.", "id": "memory-1"}
+        assert captured["recall"]["project"] == "/safe/project"
+        assert captured["remember"]["project"] == "/safe/project"
+
+    def test_signet_tool_schemas_do_not_expose_project_override(self):
+        """Project scope is initialized by the provider, not model-selected."""
+        from plugins.memory import signet as signet_mod
+
+        provider = signet_mod.SignetMemoryProvider()
+        schemas = {schema["name"]: schema for schema in provider.get_tool_schemas()}
+
+        assert "project" not in schemas["memory_search"]["parameters"]["properties"]
+        assert "project" not in schemas["memory_store"]["parameters"]["properties"]
+
+    def test_signet_session_end_sends_project_for_scope(self, monkeypatch):
+        """Session-end should carry the same project scope as other hook calls."""
+        from plugins.memory.signet.client import SignetClient
+
+        captured = {}
+
+        def fake_post(self, path, body, *, timeout=0, extra_headers=None):
+            captured["path"] = path
+            captured["body"] = body
+            return {"queued": True}
+
+        monkeypatch.setattr(SignetClient, "_post", fake_post)
+
+        client = SignetClient(agent_id="agent-1", harness="hermes-agent")
+        result = client.session_end(
+            "session-1",
+            "user: hi",
+            project="/repo/project",
+        )
+
+        assert result == {"queued": True}
+        assert captured["path"] == "/api/hooks/session-end"
+        assert captured["body"]["project"] == "/repo/project"
+        assert captured["body"]["cwd"] == "/repo/project"
 
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""
