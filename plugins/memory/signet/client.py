@@ -235,6 +235,7 @@ class SignetClient:
             "sessionKey": session_key,
             "transcript": transcript,
             "agentId": self._agent_id,
+            "project": project,
             "cwd": project,
         }
         if reason:

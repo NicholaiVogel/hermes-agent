@@ -54,7 +54,6 @@ MEMORY_SEARCH_SCHEMA = {
         "properties": {
             "query": {"type": "string", "description": "Search query text."},
             "limit": {"type": "integer", "description": "Max results to return (default 10, max 50)."},
-            "project": {"type": "string", "description": "Optional project path filter."},
             "expand": {"type": "boolean", "description": "Include lossless session transcripts as sources."},
             "type": {"type": "string", "description": "Filter by memory type."},
             "tags": {"type": "string", "description": "Filter by tags, comma-separated."},
@@ -126,7 +125,6 @@ MEMORY_STORE_SCHEMA = {
             "importance": {"type": "number", "description": "Importance score 0-1."},
             "tags": {"type": "string", "description": "Comma-separated tags for categorization."},
             "pinned": {"type": "boolean", "description": "Pin this memory so it does not decay."},
-            "project": {"type": "string", "description": "Optional project path. Defaults to the active Hermes Signet workspace."},
             "hints": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -619,6 +617,7 @@ class SignetMemoryProvider(MemoryProvider):
                     content,
                     importance=0.6,
                     tags=["hermes-builtin", target],
+                    project=self._project,
                 )
             except Exception as e:
                 logger.debug("Signet memory mirror failed: %s", e)
@@ -752,6 +751,7 @@ class SignetMemoryProvider(MemoryProvider):
                     content,
                     importance=0.6,
                     tags=["delegation", "subagent"],
+                    project=self._project,
                 )
             except Exception as e:
                 logger.debug("Signet delegation memory failed: %s", e)
@@ -852,7 +852,7 @@ class SignetMemoryProvider(MemoryProvider):
             result = self._client.recall(
                 query,
                 limit=_as_int(search_args.get("limit"), 10, minimum=1, maximum=50),
-                project=str(search_args.get("project", "") or ""),
+                project=self._project,
                 memory_type=str(search_args.get("type", "") or ""),
                 tags=str(search_args.get("tags", "") or ""),
                 who=str(search_args.get("who", "") or ""),
@@ -886,7 +886,7 @@ class SignetMemoryProvider(MemoryProvider):
                 tags=_tags(store_args.get("tags")),
                 memory_type=str(store_args.get("type", "") or ""),
                 pinned=store_args.get("pinned") if isinstance(store_args.get("pinned"), bool) else None,
-                project=str(store_args.get("project", "") or self._project),
+                project=self._project,
                 hints=_string_list(store_args.get("hints")),
                 transcript=str(store_args.get("transcript", "") or ""),
                 structured=structured,

@@ -31,8 +31,7 @@ hermes config set memory.provider signet
 signet daemon start
 ```
 
-The setup wizard checks the daemon, saves Hermes-local Signet settings, and
-registers the configured Hermes profile with Signet when possible.
+The setup wizard checks the daemon and saves Hermes-local Signet settings.
 
 ## Why Signet
 
@@ -82,8 +81,6 @@ Environment variables override the config file:
 | `SIGNET_HOST` / `SIGNET_PORT` | Host and port separately |
 | `SIGNET_AGENT_ID` | Agent scope identifier |
 | `SIGNET_AGENT_WORKSPACE` | Optional named-agent workspace path for first registration |
-| `SIGNET_AGENT_READ_POLICY` | Optional named-agent memory policy: `shared`, `isolated`, or `group` |
-| `SIGNET_AGENT_POLICY_GROUP` | Required when `SIGNET_AGENT_READ_POLICY=group` |
 
 ## Tools
 
@@ -98,8 +95,8 @@ Environment variables override the config file:
 | `recall` / `remember` | Compatibility aliases for search/store |
 
 `memory_store` accepts plain content plus optional metadata such as `type`,
-`importance`, `tags`, `pinned`, `project`, recall hints, source transcript text,
-and pre-structured entity/aspect data.
+`importance`, `tags`, `pinned`, recall hints, source transcript text, and
+pre-structured entity/aspect data.
 
 ## Session Lifecycle
 

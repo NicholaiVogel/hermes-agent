@@ -624,6 +624,96 @@ class TestPluginMemoryDiscovery:
         assert finished.is_set()
         assert provider._background_threads == []
 
+    def test_signet_builtin_memory_write_uses_active_project(self):
+        """Built-in Hermes memory mirrors should stay in the initialized scope."""
+        from plugins.memory import signet as signet_mod
+
+        captured = {}
+
+        class FakeSignetClient:
+            def remember(self, content, **kwargs):
+                captured["content"] = content
+                captured["kwargs"] = kwargs
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._project = "/repo/project"
+
+        provider.on_memory_write("add", "memory", "durable fact")
+        provider.shutdown()
+
+        assert captured["content"] == "durable fact"
+        assert captured["kwargs"]["project"] == "/repo/project"
+
+    def test_signet_tool_calls_ignore_model_supplied_project(self):
+        """Model-controlled tool args must not override initialized scope."""
+        from plugins.memory import signet as signet_mod
+
+        captured = {}
+
+        class FakeSignetClient:
+            def recall(self, query, **kwargs):
+                captured["recall"] = kwargs
+                return {"results": []}
+
+            def remember(self, content, **kwargs):
+                captured["remember"] = kwargs
+                return {"id": "memory-1"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._project = "/safe/project"
+
+        search = json.loads(provider.handle_tool_call(
+            "memory_search",
+            {"query": "fact", "project": "/other/project"},
+        ))
+        store = json.loads(provider.handle_tool_call(
+            "memory_store",
+            {"content": "fact", "project": "/other/project"},
+        ))
+
+        assert search == {"results": []}
+        assert store == {"result": "Memory saved.", "id": "memory-1"}
+        assert captured["recall"]["project"] == "/safe/project"
+        assert captured["remember"]["project"] == "/safe/project"
+
+    def test_signet_tool_schemas_do_not_expose_project_override(self):
+        """Project scope is initialized by the provider, not model-selected."""
+        from plugins.memory import signet as signet_mod
+
+        provider = signet_mod.SignetMemoryProvider()
+        schemas = {schema["name"]: schema for schema in provider.get_tool_schemas()}
+
+        assert "project" not in schemas["memory_search"]["parameters"]["properties"]
+        assert "project" not in schemas["memory_store"]["parameters"]["properties"]
+
+    def test_signet_session_end_sends_project_for_scope(self, monkeypatch):
+        """Session-end should carry the same project scope as other hook calls."""
+        from plugins.memory.signet.client import SignetClient
+
+        captured = {}
+
+        def fake_post(self, path, body, *, timeout=0, extra_headers=None):
+            captured["path"] = path
+            captured["body"] = body
+            return {"queued": True}
+
+        monkeypatch.setattr(SignetClient, "_post", fake_post)
+
+        client = SignetClient(agent_id="agent-1", harness="hermes-agent")
+        result = client.session_end(
+            "session-1",
+            "user: hi",
+            project="/repo/project",
+        )
+
+        assert result == {"queued": True}
+        assert captured["path"] == "/api/hooks/session-end"
+        assert captured["body"]["project"] == "/repo/project"
+        assert captured["body"]["cwd"] == "/repo/project"
+
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""
         from plugins.memory import load_memory_provider
