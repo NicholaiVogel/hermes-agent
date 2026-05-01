@@ -4,9 +4,10 @@ Communicates with the Signet daemon on localhost:3850 (default) for
 memory operations: search, store, hooks, and session lifecycle.
 
 Configuration resolution:
-  1. SIGNET_HOST + SIGNET_PORT env vars
+  1. Explicit base_url passed by the provider
   2. SIGNET_DAEMON_URL env var (full URL override)
-  3. Default: http://localhost:3850
+  3. SIGNET_HOST + SIGNET_PORT env vars
+  4. Default: http://localhost:3850
 """
 
 from __future__ import annotations
@@ -62,8 +63,13 @@ def _safe_score(value: Any) -> float:
 class SignetClient:
     """HTTP client for the Signet daemon API."""
 
-    def __init__(self, agent_id: str = "", harness: str = "hermes-agent"):
-        self._base_url = _resolve_base_url()
+    def __init__(
+        self,
+        agent_id: str = "",
+        harness: str = "hermes-agent",
+        base_url: str = "",
+    ):
+        self._base_url = _sanitize(base_url).rstrip("/") if base_url else _resolve_base_url()
         self._agent_id = agent_id
         self._harness = harness
 

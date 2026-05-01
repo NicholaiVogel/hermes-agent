@@ -1,6 +1,7 @@
 """Tests for the memory provider interface, manager, and builtin provider."""
 
 import json
+import threading
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -445,6 +446,122 @@ class TestPluginMemoryDiscovery:
         assert mgr.has_tool("memory_search")
         result = json.loads(mgr.handle_tool_call("memory_search", {"query": "alice"}))
         assert result == {"error": "Signet daemon is not connected."}
+
+    def test_signet_initialize_reads_saved_setup_config(self, tmp_path, monkeypatch):
+        """Values saved by `hermes memory setup` drive runtime client config."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.delenv("SIGNET_DAEMON_URL", raising=False)
+        monkeypatch.delenv("SIGNET_HOST", raising=False)
+        monkeypatch.delenv("SIGNET_PORT", raising=False)
+        monkeypatch.delenv("SIGNET_AGENT_ID", raising=False)
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://signet.local:3850",
+            "agent_id": "reviewer-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["harness"] = harness
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                captured["session_key"] = session_key
+                captured["project"] = project
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize(
+            "session-1",
+            hermes_home=str(tmp_path),
+            cwd=str(tmp_path),
+        )
+
+        assert captured["agent_id"] == "reviewer-agent"
+        assert captured["harness"] == "hermes-agent"
+        assert captured["base_url"] == "http://signet.local:3850"
+        assert captured["session_key"] == "session-1"
+
+    def test_signet_env_overrides_saved_setup_config(self, tmp_path, monkeypatch):
+        """Runtime env vars keep precedence over saved Signet setup values."""
+        from plugins.memory import signet as signet_mod
+
+        monkeypatch.setenv("SIGNET_DAEMON_URL", "http://env-signet:3850")
+        monkeypatch.setenv("SIGNET_AGENT_ID", "env-agent")
+        (tmp_path / "signet.json").write_text(json.dumps({
+            "daemon_url": "http://saved-signet:3850",
+            "agent_id": "saved-agent",
+        }))
+        captured = {}
+
+        class FakeSignetClient:
+            def __init__(self, *, agent_id="", harness="", base_url=""):
+                captured["agent_id"] = agent_id
+                captured["base_url"] = base_url
+                self.base_url = base_url
+
+            def is_available(self):
+                return True
+
+            def session_start(self, session_key, *, project=""):
+                return {"inject": "hello"}
+
+        monkeypatch.setattr(signet_mod, "SignetClient", FakeSignetClient)
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider.initialize("session-1", hermes_home=str(tmp_path), cwd=str(tmp_path))
+
+        assert captured["agent_id"] == "env-agent"
+        assert captured["base_url"] == "http://env-signet:3850"
+
+    def test_signet_prefetch_ignores_stale_thread_result(self):
+        """Older background recalls must not overwrite newer turn context."""
+        from plugins.memory import signet as signet_mod
+
+        old_started = threading.Event()
+        old_release = threading.Event()
+        old_done = threading.Event()
+
+        class FakeSignetClient:
+            def user_prompt_submit(
+                self,
+                session_key,
+                user_message,
+                *,
+                last_assistant_message="",
+                project="",
+            ):
+                if user_message == "old":
+                    old_started.set()
+                    old_release.wait(timeout=2)
+                    old_done.set()
+                    return {"inject": "old context"}
+                return {"inject": "new context"}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._session_key = "session-1"
+        provider._project = ""
+
+        provider.queue_prefetch("old")
+        assert old_started.wait(timeout=2)
+        provider.queue_prefetch("new")
+        assert provider._prefetch_thread is not None
+        provider._prefetch_thread.join(timeout=2)
+
+        assert provider.prefetch("next") == "new context"
+
+        old_release.set()
+        assert old_done.wait(timeout=2)
+        assert provider.prefetch("next") == ""
 
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""

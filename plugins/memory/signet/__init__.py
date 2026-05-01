@@ -1,17 +1,17 @@
 """Signet memory plugin — MemoryProvider for Signet persistent memory.
 
-Bridges Hermes Agent's memory provider interface to the Signet daemon
-(localhost:3850), providing hybrid search (BM25 + vector + knowledge graph),
-predictive recall, cross-session memory, and the full Signet pipeline
-(extraction, knowledge graph, retention decay, synthesis).
+Bridges Hermes Agent's memory provider interface to the Signet daemon,
+providing hybrid search (BM25 + vector + knowledge graph), cross-session
+memory, and the Signet memory pipeline (extraction, knowledge graph,
+retention decay, synthesis).
 
 Canonical Signet memory tools (memory_search, memory_store, memory_get,
 memory_list, memory_modify, memory_forget, plus recall/remember aliases) are
 exposed through the MemoryProvider interface. The daemon handles all heavy
-lifting: embedding, reranking, knowledge graph traversal, and predictive
-scoring.
+lifting: embedding, reranking, and knowledge graph traversal.
 
 Config:
+  - $HERMES_HOME/signet.json written by `hermes memory setup`
   - SIGNET_HOST / SIGNET_PORT env vars (default: localhost:3850)
   - SIGNET_DAEMON_URL env var for full URL override
   - SIGNET_AGENT_ID env var for agent scoping (default: "hermes-agent")
@@ -242,6 +242,54 @@ def _sanitize_env(value: str) -> str:
     return value.strip().replace("\r", "").replace("\n", "")
 
 
+def _resolve_daemon_url(saved: Dict[str, Any]) -> str:
+    explicit = _sanitize_env(os.environ.get("SIGNET_DAEMON_URL", ""))
+    if explicit:
+        return explicit.rstrip("/")
+
+    host_env = _sanitize_env(os.environ.get("SIGNET_HOST", ""))
+    port_env = _sanitize_env(os.environ.get("SIGNET_PORT", ""))
+    if host_env or port_env:
+        return f"http://{host_env or 'localhost'}:{port_env or '3850'}"
+
+    saved_url = saved.get("daemon_url", "")
+    if isinstance(saved_url, str) and saved_url.strip():
+        return _sanitize_env(saved_url).rstrip("/")
+
+    return "http://localhost:3850"
+
+
+def _resolve_agent_id(saved: Dict[str, Any]) -> str:
+    explicit = _sanitize_env(os.environ.get("SIGNET_AGENT_ID", ""))
+    if explicit:
+        return explicit
+
+    saved_agent_id = saved.get("agent_id", "")
+    if isinstance(saved_agent_id, str) and saved_agent_id.strip():
+        return _sanitize_env(saved_agent_id)
+
+    return "hermes-agent"
+
+
+def _load_signet_config(hermes_home: str) -> Dict[str, str]:
+    config_path = Path(hermes_home).expanduser() / "signet.json"
+    saved: Dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            raw = json.loads(config_path.read_text())
+            if isinstance(raw, dict):
+                saved = raw
+            else:
+                logger.warning("Ignoring %s because it is not a JSON object", config_path)
+        except Exception as err:
+            logger.warning("Failed to parse %s: %s", config_path, err)
+
+    return {
+        "daemon_url": _resolve_daemon_url(saved),
+        "agent_id": _resolve_agent_id(saved),
+    }
+
+
 def _resolve_agent_workspace(agent_id: str, kwargs: Dict[str, Any]) -> str:
     """Resolve the project/workspace path sent to Signet hooks.
 
@@ -288,6 +336,8 @@ class SignetMemoryProvider(MemoryProvider):
         self._identity: Optional[Dict[str, Any]] = None
         self._warnings: List[str] = []
         self._session_initialized = False
+        self._config: Dict[str, str] = {}
+        self._prefetch_generation = 0
         # Checkpoint: extract mid-session every N turns
         _CHECKPOINT_INTERVAL = 30
         self._checkpoint_interval = _CHECKPOINT_INTERVAL
@@ -303,7 +353,13 @@ class SignetMemoryProvider(MemoryProvider):
             logger.debug("Signet is_available(): SignetClient not importable")
             return False
         try:
-            return SignetClient().is_available()
+            from hermes_constants import get_hermes_home
+            cfg = _load_signet_config(str(get_hermes_home()))
+            return SignetClient(
+                agent_id=cfg["agent_id"],
+                harness="hermes-agent",
+                base_url=cfg["daemon_url"],
+            ).is_available()
         except Exception as err:
             logger.debug("Signet is_available() check failed: %s", err)
             return False
@@ -346,14 +402,6 @@ class SignetMemoryProvider(MemoryProvider):
             logger.warning("Signet plugin: SignetClient not importable — skipping initialization")
             return
 
-        agent_id = os.environ.get("SIGNET_AGENT_ID", "").strip()
-        if not agent_id:
-            logger.warning(
-                "SIGNET_AGENT_ID is not set; memory will be stored under the 'hermes-agent' "
-                "scope. Set SIGNET_AGENT_ID to scope memories to a specific agent."
-            )
-            agent_id = "hermes-agent"
-
         # Skip for cron/flush contexts — no memory injection needed
         agent_context = kwargs.get("agent_context", "")
         platform = kwargs.get("platform", "cli")
@@ -361,7 +409,16 @@ class SignetMemoryProvider(MemoryProvider):
             logger.debug("Signet skipped: cron/flush context")
             return
 
-        self._client = SignetClient(agent_id=agent_id, harness="hermes-agent")
+        hermes_home = str(kwargs.get("hermes_home", Path.home() / ".hermes"))
+        cfg = _load_signet_config(hermes_home)
+        self._config = cfg
+        agent_id = cfg["agent_id"]
+
+        self._client = SignetClient(
+            agent_id=agent_id,
+            harness="hermes-agent",
+            base_url=cfg["daemon_url"],
+        )
 
         if not self._client.is_available():
             logger.debug("Signet daemon not reachable at %s", self._client.base_url)
@@ -425,9 +482,6 @@ class SignetMemoryProvider(MemoryProvider):
         if not self._client:
             return ""
 
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
-
         with self._prefetch_lock:
             result = self._prefetch_result
             self._prefetch_result = ""
@@ -455,6 +509,20 @@ class SignetMemoryProvider(MemoryProvider):
         session_key = self._session_key
         project = self._project
         last_assistant = self._last_assistant_message
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            generation = self._prefetch_generation
+
+        def _store_prefetch(text: str) -> None:
+            if not text or not text.strip():
+                return
+            with self._prefetch_lock:
+                if (
+                    generation == self._prefetch_generation
+                    and client is self._client
+                    and session_key == self._session_key
+                ):
+                    self._prefetch_result = text
 
         def _run():
             try:
@@ -475,9 +543,7 @@ class SignetMemoryProvider(MemoryProvider):
                         )
                         if reinit:
                             inject_from_reinit = reinit.get("inject", "")
-                            if inject_from_reinit and inject_from_reinit.strip():
-                                with self._prefetch_lock:
-                                    self._prefetch_result = inject_from_reinit
+                            _store_prefetch(inject_from_reinit)
                         else:
                             logger.warning(
                                 "Signet re-initialization after daemon restart returned no data; "
@@ -485,17 +551,9 @@ class SignetMemoryProvider(MemoryProvider):
                             )
                         return
                     inject = result.get("inject", "")
-                    if inject and inject.strip():
-                        with self._prefetch_lock:
-                            self._prefetch_result = inject
+                    _store_prefetch(inject)
             except Exception as e:
                 logger.debug("Signet prefetch failed: %s", e)
-
-        # Join the previous prefetch thread before starting a new one to prevent
-        # a stale turn-N result from overwriting a turn-N+1 cleared prefetch.
-        prev_thread = self._prefetch_thread
-        if prev_thread and prev_thread.is_alive():
-            prev_thread.join(timeout=2.0)
 
         self._prefetch_thread = threading.Thread(
             target=_run, daemon=True, name="signet-prefetch"

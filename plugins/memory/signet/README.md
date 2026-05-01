@@ -1,6 +1,6 @@
 # Signet Memory Provider
 
-Persistent cross-session memory powered by the [Signet](https://github.com/signetai/signetai) daemon. Hybrid search (BM25 + vector + knowledge graph), predictive recall, automatic entity extraction, and retention decay.
+Persistent cross-session memory powered by the [Signet](https://github.com/signetai/signetai) daemon. Hybrid search (BM25 + vector + knowledge graph), automatic entity extraction, and retention decay.
 
 ## Requirements
 
@@ -29,6 +29,9 @@ Environment variables:
 - `SIGNET_AGENT_READ_POLICY` — Optional named-agent memory policy for first registration: `shared` (default), `isolated`, or `group`
 - `SIGNET_AGENT_POLICY_GROUP` — Required when `SIGNET_AGENT_READ_POLICY=group`
 
+`hermes memory setup` saves `daemon_url` and `agent_id` to `$HERMES_HOME/signet.json`.
+Environment variables override that file at runtime.
+
 ## Tools
 
 | Tool | Description |
@@ -52,9 +55,9 @@ Environment variables:
 
 The plugin bridges Hermes Agent's memory lifecycle to the Signet daemon:
 
-1. **Session start** — Calls Signet's session-start hook, which returns identity files (AGENTS.md, SOUL.md, USER.md, MEMORY.md), scored memories, and knowledge graph constraints. Injected into the system prompt.
+1. **Session start** — Calls Signet's session-start hook, which returns the initial memory/context block for the session. Injected into the system prompt.
 
-2. **Per-turn recall** — On each user message, calls the user-prompt-submit hook. Signet runs hybrid search (BM25 + vector similarity + knowledge graph traversal + predictive scoring) and returns the most relevant memories.
+2. **Per-turn recall** — On each user message, calls the user-prompt-submit hook. Signet runs hybrid search (BM25 + vector similarity + knowledge graph traversal) and returns the most relevant memories.
 
 3. **Session end** — Sends the conversation transcript to Signet's session-end hook, which queues it for the memory pipeline: extraction, knowledge graph updates, retention decay, and MEMORY.md synthesis.
 
