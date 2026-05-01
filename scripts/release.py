@@ -82,6 +82,7 @@ AUTHOR_MAP = {
     "rob@atlas.lan": "rmoen",
     # Slack ephemeral slash-ack salvage (May 2026)
     "probepark@users.noreply.github.com": "probepark",
+    "nicholaivogelfilms@gmail.com": "NicholaiVogel",
     "162235745+0z1-ghb@users.noreply.github.com": "0z1-ghb",
     "yes999zc@163.com": "yes999zc",
     "343873859@qq.com": "DrStrangerUJN",

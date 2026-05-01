@@ -397,6 +397,55 @@ class TestPluginMemoryDiscovery:
         assert p.name == "holographic"
         assert p.is_available()
 
+    def test_discover_finds_signet_provider(self):
+        """Signet is available as a bundled memory provider."""
+        from plugins.memory import discover_memory_providers
+        providers = discover_memory_providers()
+        names = [name for name, _, _ in providers]
+        assert "signet" in names
+
+    def test_load_signet_provider_without_daemon(self):
+        """Signet provider loads even when the daemon is not connected."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+
+        assert p is not None
+        assert p.name == "signet"
+
+    def test_signet_exposes_stable_tool_schemas(self):
+        """Signet tool schemas are exposed before provider initialization."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+        assert p is not None
+
+        tool_names = {schema["name"] for schema in p.get_tool_schemas()}
+        assert tool_names == {
+            "memory_search",
+            "memory_store",
+            "memory_get",
+            "memory_list",
+            "memory_modify",
+            "memory_forget",
+            "recall",
+            "remember",
+        }
+
+    def test_signet_tools_route_through_memory_manager(self):
+        """MemoryManager recognizes Signet tools instead of returning unknown."""
+        from plugins.memory import load_memory_provider
+
+        p = load_memory_provider("signet")
+        assert p is not None
+
+        mgr = MemoryManager()
+        mgr.add_provider(p)
+
+        assert mgr.has_tool("memory_search")
+        result = json.loads(mgr.handle_tool_call("memory_search", {"query": "alice"}))
+        assert result == {"error": "Signet daemon is not connected."}
+
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""
         from plugins.memory import load_memory_provider
