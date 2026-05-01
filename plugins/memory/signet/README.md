@@ -41,26 +41,29 @@ bucket. The workspace keeps the durable record; the daemon indexes, searches,
 summarizes, and structures it. Hermes gets a small integration surface while
 Signet owns the memory system around it.
 
-- **Portable** - memory can follow the user between Hermes and other harnesses.
-- **Inspectable** - the workspace includes readable files such as `MEMORY.md`,
-  plus SQLite at `$SIGNET_WORKSPACE/memory/memories.db`.
-- **Auditable** - SQLite is the query, indexing, audit, and mutation layer over
-  durable memory state.
-- **Cognitive behavioral modeling** - user understanding emerges from
-  accumulated memories, preferences, decisions, entities, and relationships
-  instead of a separate profile-management layer.
-- **Fine-grained recall** - Hermes gets simple flat hybrid recall tools, while
-  Signet also keeps navigable and tunable recall surfaces for more specific
-  searches through memory structure.
-- **Lifecycle-aware** - Signet receives session start, prompt, turn, compaction,
-  delegation, and session-end events, not just isolated search/store calls.
-- **Runtime-light** - heavy storage and processing stay in the Signet daemon, so
-  Hermes does not need to embed Signet's memory engine.
+The important boundary is that the workspace stays durable and inspectable
+while SQLite, search indexes, graph structure, summaries, and recall surfaces
+remain service layers around it. Hermes can use the memory system without
+taking responsibility for that substrate.
 
-The important product boundary is that the workspace stays durable and
-inspectable while SQLite, search indexes, graph structure, summaries, and recall
-surfaces remain service layers around it. Hermes can use the memory system
-without taking responsibility for that substrate.
+What Signet adds:
+
+- **Portable workspace memory** - memory can follow the user between Hermes and
+  other harnesses instead of being trapped in one runtime profile.
+- **Readable source record** - the workspace includes files such as `MEMORY.md`;
+  SQLite at `$SIGNET_WORKSPACE/memory/memories.db` provides the query, indexing,
+  audit, and mutation layer around that durable state.
+- **Cognitive behavioral modeling** - user understanding emerges from
+  accumulated memories, preferences, decisions, entities, relationships, and
+  session artifacts instead of a separate profile-management layer.
+- **Fine-grained recall** - Hermes gets flat hybrid recall tools for simple
+  use, while Signet also keeps navigable and tunable recall surfaces for more
+  specific searches through memory structure.
+- **Lifecycle-aware ingestion** - Signet receives session start, prompt, turn,
+  compaction, delegation, and session-end events, so it can work from the shape
+  of the conversation rather than only isolated search/store calls.
+- **Runtime-light integration** - heavy storage and processing stay in the
+  Signet daemon, so Hermes does not need to embed Signet's memory engine.
 
 ## Config
 
