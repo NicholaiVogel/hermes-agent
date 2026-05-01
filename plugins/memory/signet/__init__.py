@@ -1,14 +1,15 @@
-"""Signet memory plugin — MemoryProvider for Signet persistent memory.
+"""Signet memory plugin — MemoryProvider for Signet portable context.
 
-Bridges Hermes Agent's memory provider interface to the Signet daemon,
-providing hybrid search (BM25 + vector + knowledge graph), cross-session
-memory, and the Signet memory pipeline (extraction, knowledge graph,
-retention decay, synthesis).
+Bridges Hermes Agent's memory provider interface to the Signet daemon.
+Signet keeps durable agent context outside a single harness: readable
+workspace files plus SQLite-backed memory, audit history, query indexes,
+and structured graph state.
 
 Canonical Signet memory tools (memory_search, memory_store, memory_get,
 memory_list, memory_modify, memory_forget, plus recall/remember aliases) are
-exposed through the MemoryProvider interface. The daemon handles all heavy
-lifting: embedding, reranking, and knowledge graph traversal.
+exposed through the MemoryProvider interface. Hermes calls lifecycle hooks;
+the daemon owns storage, processing, recall, mutation history, and transcript
+lineage.
 
 Config:
   - $HERMES_HOME/signet.json written by `hermes memory setup`
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_SEARCH_SCHEMA = {
     "name": "memory_search",
-    "description": "Search Signet memories using hybrid vector + keyword search.",
+    "description": "Search Signet's durable memory record.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -295,7 +296,7 @@ def _resolve_agent_workspace(agent_id: str, kwargs: Dict[str, Any]) -> str:
 
     Named Signet agents can have their own workspace at
     $SIGNET_PATH/agents/{agent_id}. Prefer that workspace so daemon
-    session-start can load the agent's scoped identity files.
+    session-start can use the agent's scoped workspace files.
     """
     explicit = _sanitize_env(os.environ.get("SIGNET_AGENT_WORKSPACE", ""))
     if explicit:
@@ -317,7 +318,7 @@ def _resolve_agent_workspace(agent_id: str, kwargs: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 class SignetMemoryProvider(MemoryProvider):
-    """Signet persistent memory with hybrid search and knowledge graph."""
+    """Signet portable context and memory provider."""
 
     def __init__(self):
         self._client = None  # SignetClient
@@ -395,8 +396,8 @@ class SignetMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         """Connect to the Signet daemon and call session-start hook.
 
-        Retrieves identity, memories, and system prompt injection from
-        the daemon. Caches the inject text for system_prompt_block().
+        Retrieves session memory material from the daemon. Caches the
+        daemon response text for system_prompt_block().
         """
         if SignetClient is None:
             logger.warning("Signet plugin: SignetClient not importable — skipping initialization")
@@ -428,7 +429,7 @@ class SignetMemoryProvider(MemoryProvider):
         self._session_key = session_id or "hermes-default"
         self._project = _resolve_agent_workspace(agent_id, kwargs)
 
-        # Call session-start hook — get identity + memories + inject
+        # Call session-start hook to open the Signet session.
         result = self._client.session_start(
             self._session_key,
             project=self._project,
@@ -438,7 +439,7 @@ class SignetMemoryProvider(MemoryProvider):
             if inject:
                 with self._inject_lock:
                     self._inject_cache = inject
-            # Capture identity and warnings for downstream consumers
+            # Preserve daemon metadata and warnings for downstream consumers.
             self._identity = result.get("identity")
             self._warnings = result.get("warnings", [])
             self._session_initialized = True
@@ -454,7 +455,7 @@ class SignetMemoryProvider(MemoryProvider):
         """Return the Signet system prompt injection.
 
         On the first call, returns the full session-start inject
-        (identity, memories, context). Subsequent calls return a
+        returned by the daemon. Subsequent calls return a
         minimal header since per-turn recall is handled by prefetch().
         """
         if not self._client:
@@ -470,7 +471,7 @@ class SignetMemoryProvider(MemoryProvider):
         # Subsequent calls — minimal header
         return (
             "# Signet Memory\n"
-            "Active. Memories are auto-recalled each turn via hybrid search. "
+            "Active. Signet provides durable memory for this Hermes session. "
             "Use memory_search to query memory, memory_store to save facts, "
             "and memory_get/memory_list/memory_modify/memory_forget for direct "
             "memory management. If Hermes reports Unknown tool for these names, "

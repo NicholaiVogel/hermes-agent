@@ -187,7 +187,7 @@ class SignetClient:
         *,
         project: str = "",
     ) -> Optional[Dict[str, Any]]:
-        """Call session-start hook. Returns identity + memories + inject text."""
+        """Call session-start hook. Returns session memory material."""
         return self._post(
             "/api/hooks/session-start",
             {
@@ -365,7 +365,7 @@ class SignetClient:
         score_min: Optional[float] = None,
         agent_scoped: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Search memories via hybrid recall."""
+        """Search memories through the Signet daemon recall API."""
         body: Dict[str, Any] = {
             "query": query,
             "limit": limit,
