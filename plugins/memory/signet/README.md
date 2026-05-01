@@ -1,13 +1,13 @@
 # Signet Memory Provider
 
 [Signet](https://github.com/Signet-AI/signetai) is a portable context layer for
-AI agents. It gives Hermes a durable memory record that follows the user across
-tools instead of living only inside one provider, one profile, or one runtime.
+AI agents. It gives Hermes durable memory that follows the user across tools,
+sessions, and runtimes instead of living only inside one profile.
 
-This provider is the Hermes bridge. Hermes sends conversation lifecycle events
-to the local Signet daemon, and Signet handles persistence, audit history,
-structured context, cognitive behavioral modeling, summaries, and recall
-outside the Hermes process.
+This provider sends Hermes conversation lifecycle events to the local Signet
+daemon. Signet handles persistence, audit history, structured context,
+cognitive behavioral modeling, summaries, and recall outside the Hermes
+process.
 
 ## Requirements
 
@@ -34,15 +34,11 @@ signet daemon start
 The setup wizard checks the daemon, saves Hermes-local Signet settings, and
 registers the configured Hermes profile with Signet when possible.
 
-## How It Differs
+## Why Signet
 
-The other bundled Hermes memory provider READMEs generally describe how Hermes
-talks to a provider-specific SDK, API, CLI, daemon, or local store. Signet's
-distinction is the boundary it creates: Hermes gets a small integration surface,
-while Signet owns the durable context substrate and can serve the same record to
-other harnesses.
-
-That makes the integration useful in a few practical ways:
+Signet is built around a durable context substrate instead of a plugin-local
+memory bucket. Hermes gets a small integration surface, while Signet owns the
+memory system and can serve the same record to other harnesses.
 
 - **Portable** - memory is not trapped in a single Hermes profile or runtime.
 - **Inspectable** - the workspace includes readable files such as `MEMORY.md`,
