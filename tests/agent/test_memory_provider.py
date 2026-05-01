@@ -624,6 +624,49 @@ class TestPluginMemoryDiscovery:
         assert finished.is_set()
         assert provider._background_threads == []
 
+    def test_signet_checkpoint_extract_sends_transcript_delta(self):
+        """Periodic checkpoints should not resend already-submitted turns."""
+        from plugins.memory import signet as signet_mod
+
+        captured = []
+
+        class FakeSignetClient:
+            def checkpoint_extract(self, session_key, transcript, *, project=""):
+                captured.append({
+                    "session_key": session_key,
+                    "transcript": transcript,
+                    "project": project,
+                })
+                return {"queued": True}
+
+        provider = signet_mod.SignetMemoryProvider()
+        provider._client = FakeSignetClient()
+        provider._session_key = "session-1"
+        provider._project = "/repo/project"
+        provider._transcript_lines = [
+            f"user: {'a' * 600}",
+            f"assistant: {'b' * 600}",
+        ]
+
+        provider._fire_checkpoint()
+        provider.shutdown()
+
+        provider._transcript_lines.extend([
+            f"user: {'c' * 600}",
+            f"assistant: {'d' * 600}",
+        ])
+        provider._fire_checkpoint()
+        provider.shutdown()
+
+        assert len(captured) == 2
+        assert "a" * 600 in captured[0]["transcript"]
+        assert "b" * 600 in captured[0]["transcript"]
+        assert "c" * 600 not in captured[0]["transcript"]
+        assert "c" * 600 in captured[1]["transcript"]
+        assert "d" * 600 in captured[1]["transcript"]
+        assert "a" * 600 not in captured[1]["transcript"]
+        assert captured[1]["project"] == "/repo/project"
+
     def test_signet_builtin_memory_write_uses_active_project(self):
         """Built-in Hermes memory mirrors should stay in the initialized scope."""
         from plugins.memory import signet as signet_mod

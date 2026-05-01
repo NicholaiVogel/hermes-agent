@@ -349,6 +349,7 @@ class SignetMemoryProvider(MemoryProvider):
         _CHECKPOINT_INTERVAL = 30
         self._checkpoint_interval = _CHECKPOINT_INTERVAL
         self._last_checkpoint_turn = 0
+        self._last_checkpoint_line = 0
 
     @property
     def name(self) -> str:
@@ -765,10 +766,11 @@ class SignetMemoryProvider(MemoryProvider):
             return
 
         with self._transcript_lock:
-            transcript = "\n\n".join(self._transcript_lines)
-
-        if not transcript or len(transcript) < 500:
-            return
+            lines = self._transcript_lines[self._last_checkpoint_line:]
+            transcript = "\n\n".join(lines)
+            if not transcript or len(transcript) < 500:
+                return
+            self._last_checkpoint_line += len(lines)
 
         session_key = self._session_key
         project = self._project
