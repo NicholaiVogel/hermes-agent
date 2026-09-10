@@ -6,8 +6,10 @@ from rich.text import Text
 
 
 def _console(width, *, full_width=False):
+    # This renderer feeds prompt_toolkit's TUI scrollback. Keep its skin colors even when the
+    # parent shell exports NO_COLOR/TERM=dumb; the TUI itself is intentionally colorized.
     return Console(file=StringIO(), width=max(1, width if full_width else min(width, 88)), height=25,
-                   force_terminal=True)
+                   force_terminal=True, color_system='truecolor', no_color=False)
 
 
 def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
