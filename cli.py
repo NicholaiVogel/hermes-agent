@@ -3468,10 +3468,12 @@ class HermesCLI(CLIProcessNotificationsMixin, CLIAgentSetupMixin, CLICommandsMix
                     if user_input is None:
                         return
 
+        # Keep the compact marker in scrollback; expansion is for the model payload only.
+        preview_input = notification_preview or user_input
         if isinstance(user_input, str) and _PASTE_REF_RE.search(user_input):
             user_input = self._expand_paste_references(user_input)
         print()
-        self._print_user_message_preview(notification_preview or user_input)
+        self._print_user_message_preview(preview_input)
 
         if submit_images:
             n = len(submit_images)
