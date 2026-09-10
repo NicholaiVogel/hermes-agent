@@ -3497,7 +3497,10 @@ class HermesCLI(CLIProcessNotificationsMixin, CLIAgentSetupMixin, CLICommandsMix
 
         if submit_images:
             n = len(submit_images)
-            _cprint(f"  {_DIM}📎 {n} image{'s' if n > 1 else ''} attached{_RST}")
+            if self.final_response_markdown == "render":
+                _cprint(f"  {n} image{'s' if n > 1 else ''} attached\n")
+            else:
+                _cprint(f"  {_DIM}📎 {n} image{'s' if n > 1 else ''} attached{_RST}")
 
         self._agent_running = self._interactive_turn = True
         self._pet_turn_error = self._pet_reasoning = False

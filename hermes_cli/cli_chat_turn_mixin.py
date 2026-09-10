@@ -47,7 +47,7 @@ class CLIChatTurnMixin:
         turn_route = self._resolve_turn_agent_config(message)
         if turn_route["signature"] != self._active_agent_route_signature:
             self.agent = None
-        if self.agent is None:
+        if self.agent is None and getattr(self, "final_response_markdown", "strip") != "render":
             _cprint(f"{_DIM}Initializing agent...{_RST}")
         if not self._init_agent(model_override=turn_route["model"], runtime_override=turn_route["runtime"],
                                 request_overrides=turn_route.get("request_overrides")):
@@ -69,8 +69,9 @@ class CLIChatTurnMixin:
         if isinstance(message, SubagentNotification):
             message = str(message)  # UI metadata is on the staged row, never in model content.
 
-        ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
-        print(flush=True)
+        if getattr(self, "final_response_markdown", "strip") != "render":
+            ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
+            print(flush=True)
 
         turn = _ChatTurn()
         try:
@@ -182,8 +183,9 @@ class CLIChatTurnMixin:
                     _cprint(f"  {_DIM}⚠ skipped {len(_skipped)} unreadable image path(s){_RST}")
                 if any(p.get("type") == "image_url" for p in _parts):
                     _img_names = ", ".join(Path(p).name for p in _img_str_paths)
-                    _cprint(f"  {_DIM}📎 attaching {len(images)} image(s) natively "
-                            f"(model supports vision): {_img_names}{_RST}")
+                    if getattr(self, "final_response_markdown", "strip") != "render":
+                        _cprint(f"  {_DIM}📎 attaching {len(images)} image(s) natively "
+                                f"(model supports vision): {_img_names}{_RST}")
                     return _parts
                 # All images unreadable — fall back to text enrichment.
             except Exception as _img_exc:

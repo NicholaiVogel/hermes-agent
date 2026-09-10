@@ -33,6 +33,13 @@ line before assistant prose resumes. Failed tools retain an explicit `Failed` la
 and the skin error color. Tool summaries and durations remain visible; history redraw
 reflows the activity to the current terminal width.
 
+User turns use a small **You** label and literal, regular-weight text at a maximum
+88-column measure. The existing first/last-line preview settings apply after wrapping,
+so long pasted paragraphs stay compact; full submitted content is unchanged. Successful
+native image routing no longer repeats the attachment count or transport details.
+Self-improvement review notices use muted, indented details and retain their position
+after any active assistant response.
+
 The existing `strip` and `raw` modes retain their old streaming behavior. Set
 `display.final_response_markdown` back to `strip` and restart Hermes to disable this
 renderer. Skin colors and branding remain configurable through the existing skin engine.

@@ -1,0 +1,65 @@
+"""Readable user turns and background review notices for the Python CLI."""
+from io import StringIO
+
+from rich.console import Console
+from rich.text import Text
+
+
+def _console(width):
+    return Console(file=StringIO(), width=max(1, min(width, 88)), height=25,
+                   force_terminal=True)
+
+
+def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
+    from hermes_cli.skin_engine import get_active_skin
+    skin = get_active_skin()
+    console = _console(width)
+    label = Text('You', style='bold ' + skin.get_color('ui_accent', '#aaaaaa'))
+    if timestamp:
+        label.append('  ' + timestamp, style=skin.get_color('banner_dim', '#8B949E'))
+    console.print()
+    console.print(label)
+    # Wrap before applying the existing preview budget: one long pasted paragraph
+    # must not bypass it. Only the displayed preview is shortened, never model input.
+    rows = list(Text(text).wrap(console, max(1, console.width - 2)))
+    first, last = max(1, first), max(0, last)
+    if len(rows) > first + last:
+        hidden = len(rows) - first - last
+        rows = rows[:first] + [Text(f'… (+{hidden} more lines)',
+                                  style=skin.get_color('banner_dim', '#8B949E'))] + (rows[-last:] if last else [])
+    for row in rows:
+        console.print(Text('  ') + row)
+    console.print()
+    return console.file.getvalue().rstrip('\n') + '\n'
+
+
+def render_review_notice(text, width):
+    from hermes_cli.skin_engine import get_active_skin
+    color = get_active_skin().get_color('banner_dim', '#8B949E')
+    console = _console(width)
+    console.print(Text('  Self-improvement review', style='bold ' + color))
+    # Preserve all action details, with natural wrapping instead of one dense banner.
+    for detail in text.split(' · '):
+        for row in Text(detail, style=color).wrap(console, max(1, console.width - 4)):
+            console.print(Text('    ', style=color) + row)
+    console.print()
+    return console.file.getvalue().rstrip('\n') + '\n'
+
+
+def print_reflowing(render):
+    from cli import _cprint, _record_output_history_entry, _suspend_output_history
+    def lines():
+        from cli import _terminal_columns
+        return render(_terminal_columns()).split('\n')
+    _record_output_history_entry(lines)
+    with _suspend_output_history():
+        _cprint('\n'.join(lines()))
+
+
+def print_review_notice(text):
+    prefix = '💾 Self-improvement review: '
+    if not text.strip().startswith(prefix):
+        return False
+    details = text.strip()[len(prefix):]
+    print_reflowing(lambda width: render_review_notice(details, width))
+    return True

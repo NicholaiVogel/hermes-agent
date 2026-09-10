@@ -213,6 +213,16 @@ class CLIStreamMixin:
         if isinstance(user_input, SubagentNotification):
             ChatConsole().print(f"[dim]◈ {_escape(user_input.display_text)}[/dim]")
             return
+        if getattr(self, "final_response_markdown", "strip") == "render":
+            from hermes_cli.cli_conversation_display import print_reflowing, render_user_preview
+            from cli import datetime
+            timestamp = (datetime.now().strftime(getattr(self, "timestamp_format", "%H:%M"))
+                         if getattr(self, "show_timestamps", False) else "")
+            print_reflowing(lambda width: render_user_preview(
+                str(user_input or ""), width,
+                first=getattr(self, "user_message_preview_first_lines", 2),
+                last=getattr(self, "user_message_preview_last_lines", 2), timestamp=timestamp))
+            return
         ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
         text = str(user_input or "")
         if "\n" in text:
@@ -260,6 +270,10 @@ class CLIStreamMixin:
         if getattr(self, "_stream_box_live", False) or getattr(self, "_reasoning_box_opened", False):
             self._held_status_lines = getattr(self, "_held_status_lines", []) + [text]
             return
+        if getattr(self, "final_response_markdown", "strip") == "render":
+            from hermes_cli.cli_conversation_display import print_review_notice
+            if print_review_notice(text):
+                return
         _cprint(text)
 
     def _release_held_status_lines(self) -> None:
@@ -267,7 +281,7 @@ class CLIStreamMixin:
         from cli import _cprint
         held, self._held_status_lines = getattr(self, "_held_status_lines", []), []
         for line in held:
-            _cprint(line)
+            self._agent_status_print(line)
 
     def _close_reasoning_box(self) -> None:
         """Close the live reasoning box if it's open, then flush deferred content."""
