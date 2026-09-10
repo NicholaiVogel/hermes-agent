@@ -1,15 +1,13 @@
 """Codex tool events are display boundaries even without a stream None sentinel."""
-from types import SimpleNamespace
-
 import pytest
 
-from agent.codex_runtime import make_codex_app_server_event_bridge
 from cli import HermesCLI
 
 
 @pytest.mark.parametrize('mode', ['render', 'raw', 'strip'])
 @pytest.mark.parametrize('completed_only', [False, True])
-def test_codex_tools_keep_assistant_messages_in_event_order(monkeypatch, completed_only, mode):
+def test_codex_tools_keep_assistant_messages_in_event_order(monkeypatch, completed_only, mode,
+                                                           codex_bridge):
     import cli as facade
     emitted = []
     monkeypatch.setattr(facade, '_cprint', emitted.append)
@@ -23,8 +21,7 @@ def test_codex_tools_keep_assistant_messages_in_event_order(monkeypatch, complet
     cli._turn_summary_record = lambda *args: None
     cli._invalidate = lambda *args, **kwargs: None
     cli._reset_stream_state()
-    bridge = make_codex_app_server_event_bridge(SimpleNamespace(
-        _fire_stream_delta=cli._stream_delta, tool_progress_callback=cli._on_tool_progress))
+    bridge = codex_bridge(cli)
     emitted.append('USER: Read my note')
     bridge({'method': 'item/agentMessage/delta', 'params': {'delta': "I'll find your note."}})
     item = {'id': 'tool-one', 'type': 'commandExecution', 'command': 'cat note.md',
