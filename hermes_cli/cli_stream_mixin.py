@@ -413,6 +413,14 @@ class CLIStreamMixin:
             return
         self._close_reasoning_box()
 
+        if self.final_response_markdown == "render":
+            from hermes_cli.cli_markdown_stream import MarkdownStream
+            if getattr(self, "_markdown_stream", None) is None:
+                self._markdown_stream = MarkdownStream(self)
+            self._stream_box_opened = self._stream_box_live = True
+            self._markdown_stream.feed(text)
+            return
+
         # Open the response box header on the very first visible text
         if not self._stream_box_opened:
             text = text.lstrip("\n")
@@ -486,6 +494,11 @@ class CLIStreamMixin:
             self._emit_stream_text(self._stream_prefilt)
             self._stream_prefilt = ""
         self._close_reasoning_box()  # in case no content tokens arrived
+        if getattr(self, "_markdown_stream", None) is not None:
+            self._markdown_stream.feed("", final=True)
+            self._stream_box_live = False
+            self._release_held_status_lines()
+            return
         # A trailing partial table row joins the table buffer so the whole block is re-aligned
         # together (else the final row prints under-padded).
         if (
@@ -508,6 +521,7 @@ class CLIStreamMixin:
 
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
+        self._markdown_stream = None
         self._stream_buf = ""
         self._stream_started = False
         self._stream_box_opened = False

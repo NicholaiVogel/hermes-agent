@@ -375,6 +375,7 @@ class CLITuiMixin:
         (wrappers normally override ``_get_extra_tui_widgets`` instead)."""
         ordered = [
             Window(height=0),
+            getattr(self, "_markdown_preview_widget", None),
             sudo_widget,
             secret_widget,
             approval_widget,
@@ -2014,6 +2015,8 @@ class CLITuiMixin:
         from hermes_cli.cli_subagent_monitor import install_dock
         install_dock(self)
         input_area = self._tui_build_input_area()
+        from hermes_cli.cli_markdown_stream import preview_window
+        self._markdown_preview_widget = preview_window(self)
         spinner_widget = Window(
             content=FormattedTextControl(self._tui_spinner_text),
             height=self._tui_spinner_height,
