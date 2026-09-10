@@ -3,6 +3,7 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.text import Text
 
 from cli import HermesCLI, _render_final_assistant_content
@@ -46,3 +47,47 @@ def test_stream_and_final_renderable_preserve_same_content(monkeypatch, source, 
     before = list(emitted)
     cli._flush_stream()
     assert emitted == before
+
+
+def test_final_assistant_content_uses_markdown_renderable():
+    renderable = _render_final_assistant_content("# Title\n\n- one\n- two")
+
+    assert isinstance(renderable, Markdown)
+    output = _render_to_text(renderable)
+    assert all(value in output for value in ("Title", "one", "two"))
+
+
+def test_final_assistant_content_keeps_non_path_markdown_escapes():
+    output = _render_to_text(_render_final_assistant_content(r"1\. Not an ordered list"))
+    assert "1. Not an ordered list" in output
+    assert r"1\." not in output
+
+
+def test_strip_mode_preserves_lists_and_blockquotes():
+    output = _render_to_text(_render_final_assistant_content(
+        "**Formatting**\n- Ran prettier\n- Files changed\n\n> quoted text",
+        mode="strip"))
+    assert "- Ran prettier" in output
+    assert "- Files changed" in output
+    assert "> quoted text" in output
+    assert "**" not in output
+
+
+def test_strip_mode_preserves_cron_asterisks_and_identifiers():
+    output = _render_to_text(_render_final_assistant_content(
+        "* * * * *\n\nLet test_case stay\n\n* * *", mode="strip"))
+    assert "* * * * *" in output
+    assert "test_case" in output
+    assert "* * *" not in output.splitlines()
+
+
+def test_strip_mode_still_strips_boundary_underscore_emphasis():
+    output = _render_to_text(_render_final_assistant_content(
+        "say _hi_ and __bold__ now", mode="strip"))
+    assert "say hi and bold now" in output
+
+
+def _render_to_text(renderable) -> str:
+    buf = StringIO()
+    Console(file=buf, width=80, force_terminal=False, color_system=None).print(renderable)
+    return buf.getvalue()
