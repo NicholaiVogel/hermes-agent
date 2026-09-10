@@ -651,6 +651,14 @@ class CLIStreamMixin:
         progress modes tool.completed also commits a stacked scrollback line (tool history).
         """
         from cli import CLI_CONFIG, _DIM, _RST, _cprint, _hermes_home
+        # Some providers (notably Codex app-server) send tool events without the
+        # stream's None sentinel. Commit preceding text before tool UI/scrollback,
+        # and start a fresh message for subsequent deltas. Fast tools may omit started.
+        if event_type in {"tool.started", "tool.completed"} and (
+            getattr(self, "_stream_started", False)
+            or getattr(self, "_reasoning_box_opened", False)
+        ):
+            self._stream_delta(None)
         # MoA reference outputs (display-only events from the MoA facade): render each answer
         # as a labelled thinking-style block BEFORE the aggregator acts.
         if event_type == "moa.reference":
