@@ -1,4 +1,4 @@
-"""Worker deltas and tool notifications share the real prompt-toolkit output queue."""
+"""Worker, Markdown, and Codex tool events preserve display order across output boundaries."""
 import asyncio
 
 import pytest
