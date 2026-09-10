@@ -3,33 +3,34 @@ from io import StringIO
 
 from rich.console import Console
 from rich.text import Text
-from rich.panel import Panel
-from rich import box
 
 
-def _console(width):
-    return Console(file=StringIO(), width=max(1, min(width, 88)), height=25,
+def _console(width, *, full_width=False):
+    return Console(file=StringIO(), width=max(1, width if full_width else min(width, 88)), height=25,
                    force_terminal=True)
 
 
 def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
     from hermes_cli.skin_engine import get_active_skin
     skin = get_active_skin()
-    console = _console(width)
+    console = _console(width, full_width=True)
     # Wrap before applying the existing preview budget: one long pasted paragraph
     # must not bypass it. Only the displayed preview is shortened, never model input.
-    rows = list(Text(text).wrap(console, max(1, console.width - 4)))
+    rows = list(Text(text).wrap(console, max(1, console.width - 2)))
     first, last = max(1, first), max(0, last)
     if len(rows) > first + last:
         hidden = len(rows) - first - last
         rows = rows[:first] + [Text(f'… (+{hidden} more lines)',
                                   style=skin.get_color('banner_dim', '#8B949E'))] + (rows[-last:] if last else [])
-    body = Text('\n').join(rows)
-    console.print(Panel(
-        body, box=box.ROUNDED, padding=(0, 1),
-        border_style=skin.get_color('input_rule', '#58616A'),
-        style=skin.get_color('banner_text', '#c9d1d9') + ' on ' + skin.get_color('status_bar_bg', '#1F1F1F'),
-        subtitle=Text(timestamp) if timestamp else None, subtitle_align='right'))
+    if timestamp:
+        rows.append(Text(timestamp, style=skin.get_color('banner_dim', '#8B949E')))
+    for row in rows:
+        # Generated omission/timestamp rows also need wrapping before background fill.
+        for visual_row in row.wrap(console, max(1, console.width - 2)):
+            band = Text(' ' if console.width > 1 else '', style='#e6e6e6 on #303030')
+            band.append_text(visual_row)
+            band.pad_right(max(0, console.width - band.cell_len))
+            console.print(band, overflow='crop')
     return console.file.getvalue().rstrip('\n') + '\n'
 
 

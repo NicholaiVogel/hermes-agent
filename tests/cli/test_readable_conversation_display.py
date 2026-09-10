@@ -11,13 +11,19 @@ def test_user_preview_wraps_before_budget_and_keeps_literal_input(monkeypatch):
     output = render_user_preview(short, 80)
     assert short in output
     assert 'You' not in output
-    assert '╭' in output and '╰' in output
+    assert not any(char in output for char in '╭╰│─')
+    assert all(Text.from_ansi(row).cell_len == 80 for row in output.splitlines())
+    wide = render_user_preview('Short message', 140)
+    assert Text.from_ansi(wide.splitlines()[0]).cell_len == 140
     assert all(span.style.color is None for span in Text.from_ansi(output).spans)
     long = 'First words ' + 'middle words ' * 50 + 'last words'
     output = render_user_preview(long, 40, first=2, last=1, timestamp='12:34')
     assert 'First words' in output and 'last words' in output
     assert 'more lines' in output and '12:34' in output
     assert all(Text.from_ansi(row).cell_len <= 40 for row in output.splitlines())
+    for width in (12, 40, 140):
+        band = render_user_preview(long, width, first=1, last=1, timestamp='12:34:56')
+        assert all(Text.from_ansi(row).cell_len == width for row in band.splitlines())
     assert long.endswith('last words')
 
 
