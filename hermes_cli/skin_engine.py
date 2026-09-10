@@ -154,23 +154,6 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "spinner": {},
         "branding": {**_HERMES_BRANDING, "help_header": "[?] Available Commands"},
         "tool_prefix": "┊"},
-    "readable-python": {
-        "name": "readable-python", "description": "Quiet styling for the Python CLI",
-        "colors": {
-            "banner_border": "#5E5E5E", "banner_title": "#e6edf3", "banner_accent": "#aaaaaa",
-            "banner_dim": "#8B949E", "banner_text": "#c9d1d9", "ui_accent": "#aaaaaa",
-            "ui_label": "#9AA4AE", "ui_ok": "#888888", "ui_error": "#F08080", "ui_warn": "#D7BA7D",
-            "prompt": "#c9d1d9", "input_rule": "#58616A", "response_border": "#aaaaaa",
-            "status_bar_bg": "#1F1F1F", "status_bar_text": "#C9D1D9",
-            "status_bar_strong": "#E6EDF3", "status_bar_dim": "#9AA4AE",
-            "status_bar_good": "#B5B5B5", "status_bar_warn": "#AAAAAA", "status_bar_bad": "#D0D0D0",
-            "status_bar_critical": "#F0F0F0", "session_label": "#888888",
-            "session_border": "#5E5E5E", "completion_menu_bg": "#1F1F1F",
-            "completion_menu_current_bg": "#464646", "selection_bg": "#505050",
-            "shell_dollar": "#aaaaaa", "voice_status_bg": "#1F1F1F"},
-        "spinner": {},
-        "branding": {**_HERMES_BRANDING, "help_header": "[?] Available Commands", "prompt_symbol": "›"},
-        "tool_prefix": "┊"},
     "slate": {
         "name": "slate", "description": "Cool blue — developer-focused",
         "colors": {
