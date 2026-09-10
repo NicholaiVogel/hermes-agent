@@ -1,4 +1,8 @@
-"""User previews are literal and bounded; review notices retain details and ordering."""
+"""Readable conversation rows and notification ordering."""
+from queue import Queue
+from types import SimpleNamespace
+
+import pytest
 from rich.text import Text
 
 from cli import HermesCLI
@@ -54,3 +58,75 @@ def test_review_notice_waits_for_assistant_and_preserves_all_details(monkeypatch
     assert emitted[-1] == 'WARNING: example failure'
     assert all(Text.from_ansi(row).cell_len <= 30
                for row in render_review_notice(detail, 30).splitlines())
+
+
+@pytest.mark.parametrize('mode,label', [('queue', 'Queued for next turn'),
+                                        ('steer', 'Steered'),
+                                        ('interrupt', 'Redirected current turn')])
+def test_busy_acknowledgments_share_quiet_layout_and_preserve_payload(monkeypatch, mode, label):
+    import cli as facade
+    emitted, accepted = [], []
+    monkeypatch.setattr(facade, '_cprint', emitted.append)
+    monkeypatch.setattr('agent.onboarding.is_seen', lambda *args: True)
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.final_response_markdown = 'render'
+    cli.busy_input_mode = mode
+    cli._pending_input = Queue()
+    cli._interrupt_queue = Queue()
+    cli.agent = SimpleNamespace(steer=lambda text: accepted.append(text) or True,
+                                redirect=lambda text: accepted.append(text) or True,
+                                _supports_active_turn_redirect=True)
+    text = '[bold]keep this literal[/bold]'
+    cli._tui_enter_while_busy(text, [], text)
+    if mode == 'queue':
+        assert cli._pending_input.get_nowait() == text
+    else:
+        assert accepted == [text]
+    output = Text.from_ansi('\n'.join(emitted)).plain
+    assert output.startswith('  ' + label + '\n    ')
+    assert text in output
+    assert not any(mark in output for mark in ['⏩', '↪'])
+    assert cli._interrupt_queue.empty()
+
+
+@pytest.mark.parametrize('mode,label', [('queue', 'Queued for next turn'),
+                                        ('steer', 'Steered'),
+                                        ('interrupt', 'Redirected current turn')])
+def test_busy_acknowledgment_flushes_live_assistant_before_notice(monkeypatch, mode, label):
+    import cli as facade
+    emitted = []
+    monkeypatch.setattr(facade, '_cprint', emitted.append)
+    monkeypatch.setattr('agent.onboarding.is_seen', lambda *args: True)
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.final_response_markdown = 'render'
+    cli.show_reasoning = False
+    cli.busy_input_mode = mode
+    cli._pending_input = Queue()
+    cli._interrupt_queue = Queue()
+    cli.agent = SimpleNamespace(steer=lambda text: True, redirect=lambda text: True,
+                                _supports_active_turn_redirect=True)
+    cli._reset_stream_state()
+    cli._stream_delta('Assistant text that must land before the acknowledgment.')
+    cli._tui_enter_while_busy('follow-up', [], 'follow-up')
+    output = Text.from_ansi('\n'.join(emitted)).plain
+    assert output.index('Assistant text that must land before the acknowledgment.') < output.index(label)
+
+
+def test_slash_queue_and_steer_use_same_layout_without_hiding_failure(monkeypatch):
+    import cli as facade
+    emitted = []
+    monkeypatch.setattr(facade, '_cprint', emitted.append)
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.final_response_markdown = 'render'
+    cli._pending_input = Queue()
+    cli._agent_running = True
+    cli.agent = SimpleNamespace(steer=lambda text: True)
+    cli._cmd_queue('/queue Next task')
+    cli._cmd_steer('/steer Focus here')
+    assert cli._pending_input.get_nowait() == 'Next task'
+    output = Text.from_ansi('\n'.join(emitted)).plain
+    assert '  Queued for next turn\n    Next task' in output
+    assert '  Steering queued after next tool call\n    Focus here' in output
+    cli.agent.steer = lambda text: (_ for _ in ()).throw(RuntimeError('example failure'))
+    cli._cmd_steer('/steer Again')
+    assert emitted[-1] == '  Steer failed: example failure'
