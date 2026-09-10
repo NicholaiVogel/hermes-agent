@@ -3,10 +3,13 @@ from rich.text import Text
 
 from cli import HermesCLI
 from hermes_cli.cli_conversation_display import render_user_preview, render_review_notice
+from hermes_cli.skin_engine import get_active_skin
 
 
 def test_user_preview_wraps_before_budget_and_keeps_literal_input(monkeypatch):
-    monkeypatch.setenv('NO_COLOR', '1')
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    monkeypatch.setenv('TERM', 'xterm-256color')
     short = '[bold]literal[/bold] **not Markdown**'
     output = render_user_preview(short, 80)
     assert short in output
@@ -15,7 +18,9 @@ def test_user_preview_wraps_before_budget_and_keeps_literal_input(monkeypatch):
     assert all(Text.from_ansi(row).cell_len == 80 for row in output.splitlines())
     wide = render_user_preview('Short message', 140)
     assert Text.from_ansi(wide.splitlines()[0]).cell_len == 140
-    assert all(span.style.color is None for span in Text.from_ansi(output).spans)
+    expected_bg = get_active_skin().get_color('status_bar_bg', '#1a1a2e')
+    assert any(span.style.bgcolor and span.style.bgcolor.get_truecolor().hex == expected_bg.lower()
+               for span in Text.from_ansi(output).spans)
     long = 'First words ' + 'middle words ' * 50 + 'last words'
     output = render_user_preview(long, 40, first=2, last=1, timestamp='12:34')
     assert 'First words' in output and 'last words' in output

@@ -13,6 +13,8 @@ def _console(width, *, full_width=False):
 def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
     from hermes_cli.skin_engine import get_active_skin
     skin = get_active_skin()
+    band_bg = skin.get_color('status_bar_bg', '#1a1a2e')
+    band_fg = skin.get_color('status_bar_text', '#C0C0C0')
     console = _console(width, full_width=True)
     # Wrap before applying the existing preview budget: one long pasted paragraph
     # must not bypass it. Only the displayed preview is shortened, never model input.
@@ -30,7 +32,7 @@ def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
         for visual_row in row.wrap(console, max(1, console.width - 4)):
             prefix = ' ● ' if first_row else '   '
             first_row = False
-            band = Text(prefix[:max(0, console.width - 1)], style='#e6e6e6 on #303030')
+            band = Text(prefix[:max(0, console.width - 1)], style=f'{band_fg} on {band_bg}')
             band.append_text(visual_row)
             band.pad_right(max(0, console.width - band.cell_len))
             console.print(band, overflow='crop')
