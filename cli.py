@@ -1485,12 +1485,11 @@ def _terminal_width_for_streaming() -> int:
     return max(20, _terminal_columns() - len(_STREAM_PAD) - 2)
 
 
-def _render_final_assistant_content(text: str, mode: str = "render"):
+def _render_final_assistant_content(text: str, mode: str = "render", *, width: int | None = None,
+                                    terminal_wrap: bool = False):
     """Render final assistant content as markdown, stripped text, or raw text."""
-    from rich.markdown import Markdown
-
     # 1 border cell each side + margin so resize races don't push a borderline table into soft-wrap.
-    panel_width = max(20, _terminal_columns() - 4)
+    panel_width = max(20, _terminal_columns() - 4) if width is None else max(1, width)
 
     normalized_mode = str(mode or "render").strip().lower()
     if normalized_mode == "strip":
@@ -1499,11 +1498,8 @@ def _render_final_assistant_content(text: str, mode: str = "render"):
     if normalized_mode == "raw":
         return _rich_text_from_ansi(text or "")
 
-    # Normalising under-padded tables up front gives narrow-panel fallbacks consistent input.
-    plain = _rich_text_from_ansi(text or "").plain
-    plain = _preserve_windows_dot_segments_for_markdown(plain)
-    plain = realign_markdown_tables(plain, panel_width)
-    return Markdown(plain)
+    from hermes_cli.cli_markdown_stream import make_markdown
+    return make_markdown(text or "", panel_width, terminal_wrap=terminal_wrap)
 
 
 def _post_stream_transform_output(response: str, result: dict | None) -> str:

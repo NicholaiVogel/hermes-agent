@@ -620,8 +620,8 @@ class CLIChatTurnMixin:
                 if _post_stream_text.strip():
                     _cprint(_post_stream_text)
             elif self.final_response_markdown == "render":
-                from hermes_cli.cli_markdown_stream import MarkdownStream
-                MarkdownStream(self).feed(response, final=True)
+                from hermes_cli.cli_markdown_stream import print_markdown
+                print_markdown(response)
             else:
                 ChatConsole().print(Panel(
                     _render_final_assistant_content(response, mode=self.final_response_markdown),

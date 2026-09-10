@@ -52,9 +52,8 @@ class _ScrollbackMarkdown(ReadableMarkdown):
     elements = {**ReadableMarkdown.elements, "paragraph_open": _TerminalParagraph}
 
 
-def render_markdown(source: str, width: int, *, color: bool = True,
-                    terminal_wrap: bool = False) -> str:
-    """Share formatting; scrollback lets the terminal soft-wrap top-level prose."""
+def make_markdown(source: str, width: int, *, terminal_wrap: bool = False) -> Markdown:
+    """One normalized Rich renderable for final output, streaming and command views."""
     from cli import _rich_text_from_ansi, _preserve_windows_dot_segments_for_markdown
 
     from agent.markdown_tables import realign_markdown_tables
@@ -70,14 +69,43 @@ def render_markdown(source: str, width: int, *, color: bool = True,
             block = "".join(source_lines[start:end])
             source_lines[start:end] = [realign_markdown_tables(block, max(1, width))]
         source = "".join(source_lines)
+    markdown = _ScrollbackMarkdown if terminal_wrap else ReadableMarkdown
+    return markdown(source, code_theme="github-dark", justify="left", hyperlinks=False)
+
+
+def render_markdown(source: str, width: int, *, color: bool = True,
+                    terminal_wrap: bool = False) -> str:
+    from cli import _render_final_assistant_content
+
     buf = StringIO()
     console = Console(file=buf, width=max(1, width), height=25, force_terminal=color,
                       color_system="truecolor" if color else None,
                       theme=Theme({"markdown.h1": "bold", "markdown.h2": "bold",
                                    "markdown.h3": "bold", "markdown.code": "bold cyan"}))
-    markdown = _ScrollbackMarkdown if terminal_wrap else ReadableMarkdown
-    console.print(markdown(source, code_theme="github-dark", justify="left", hyperlinks=False), crop=False)
+    console.print(_render_final_assistant_content(
+        source, width=width, terminal_wrap=terminal_wrap), crop=False)
     return buf.getvalue().rstrip("\n")
+
+
+def print_markdown(committed: str, *, live: bool = False) -> None:
+    """Commit complete Markdown without creating live-stream state."""
+    from cli import _cprint, _record_output_history_entry, _suspend_output_history
+    if committed.strip():
+        def lines(source=committed):
+            from cli import _terminal_columns
+            return (render_markdown(source, _terminal_columns(), terminal_wrap=True) + "\n").split("\n")
+        # Retain source, not width-specific ANSI, so Ctrl+L/resize can reflow it.
+        _record_output_history_entry(lines)
+        with _suspend_output_history():
+            if live:
+                from cli import _pt_print_ansi
+                _pt_print_ansi("\n".join(lines()))
+            else:
+                from cli import _terminal_columns
+                import sys
+                rendered = render_markdown(committed, _terminal_columns(),
+                                           color=sys.stdout.isatty(), terminal_wrap=True)
+                _cprint(rendered + "\n")
 
 
 class MarkdownStream:
@@ -134,27 +162,11 @@ class MarkdownStream:
             asyncio.run_coroutine_threadsafe(update(), app.loop).result()
 
     def _update(self, text: str, final: bool, *, live: bool) -> None:
-        from cli import _cprint, _record_output_history_entry, _suspend_output_history
         with self._lock:
             self.pending += text
             cut = len(self.pending) if final else self._stable_prefix(self.pending)
             committed, self.pending = self.pending[:cut], self.pending[cut:]
-        if committed.strip():
-            def lines(source=committed):
-                from cli import _terminal_columns
-                return (render_markdown(source, _terminal_columns(), terminal_wrap=True) + "\n").split("\n")
-            # Retain source, not width-specific ANSI, so Ctrl+L/resize can reflow it.
-            _record_output_history_entry(lines)
-            with _suspend_output_history():
-                if live:
-                    from cli import _pt_print_ansi
-                    _pt_print_ansi("\n".join(lines()))
-                else:
-                    from cli import _terminal_columns
-                    import sys
-                    rendered = render_markdown(committed, _terminal_columns(),
-                                               color=sys.stdout.isatty(), terminal_wrap=True)
-                    _cprint(rendered + "\n")
+        print_markdown(committed, live=live)
 
     def _stable_prefix(self, source: str) -> int:
         # Keep the last block: a paragraph can turn into a setext heading/table; a list,

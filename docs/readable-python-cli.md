@@ -52,3 +52,19 @@ with an offline response fixture at 90, 48 and 100 columns.
 
 The renderer is integrated into the Python CLI; the optional `readable-python` skin uses
 the existing skin engine. No new dependencies or model prompt instructions are required.
+
+Rendering contract: `_render_final_assistant_content()` is the shared factory entry point
+for completed output, streaming output and command views. Its render mode delegates to
+`make_markdown()` for ANSI/path/table normalization and the Rich renderable. `print_markdown()`
+commits complete source with reflowable history; `MarkdownStream` only manages pending
+source and live presentation. The strip/raw branches retain their existing behavior.
+Parameterized tests compare final renderables with character-by-character streaming for
+pipes, pipe-less tables, backtick/tilde fences, setext headings, blockquotes, reference
+links and trailing newlines. An event-loop test covers rapid worker deltas and tool events.
+
+The optional `readable-python` skin is intended as a supported built-in, independently
+selectable from Markdown rendering. It themes CLI labels, status, tools and errors.
+Markdown prose/headings currently use the renderer's styles, and code uses `github-dark`;
+switching skins does not change syntax highlighting. Full Markdown skin integration is
+a separate concern, overlapping upstream PR #83236. Tests enforce this current boundary
+and verify color-free fallback rather than claiming skin-aware syntax highlighting.
