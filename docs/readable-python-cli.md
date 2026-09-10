@@ -6,6 +6,7 @@ Enable the renderer in your existing config (merge these keys under `display`):
 display:
   final_response_markdown: render
   streaming: true
+  skin: readable-python  # optional; other skins also work
 ```
 
 This changes the classic Python CLI, not `hermes --tui`. It uses the already installed
@@ -15,7 +16,9 @@ content are rewritten.
 The last Markdown block is a live prompt-toolkit widget. Earlier blocks are committed
 to normal scrollback. A Markdown parser keeps lists, tables and fenced code together;
 unfinished paragraphs and code remain visible as tokens arrive. A tall unfinished block
-shows its tail in at most half the terminal. Its full contents enter scrollback when
+shows its tail in at most half the terminal. Above 8 KiB of pending source, the preview
+uses a bounded literal tail to keep typing responsive; full Markdown formatting returns
+on commit. Reference-style links conservatively keep their document context until flush. Its full contents enter scrollback when
 it completes. Approval and question panels temporarily hide the preview to retain room
 for their controls.
 
@@ -35,5 +38,5 @@ interaction test runs a real prompt-toolkit application with a worker stream and
 input. The implementation was also exercised through the complete CLI in a pseudo-terminal
 with an offline response fixture at 90, 48 and 100 columns.
 
-This is a local source change, not a supported renderer plugin. Keep the patch or feature
-branch when updating Hermes; there is no automatic reapplication or monkey patch loader.
+The renderer is integrated into the Python CLI; the optional `readable-python` skin uses
+the existing skin engine. No new dependencies or model prompt instructions are required.

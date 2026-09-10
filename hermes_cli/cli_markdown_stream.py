@@ -1,7 +1,7 @@
 """Rich Markdown in the classic CLI, with prompt_toolkit owning all live drawing.
 
-Only the last top-level block is mutable. It lives in the application layout;
-older blocks are printed above it through run_in_terminal, never cursor escapes.
+The unfinished block lives in the application layout; completed blocks print above
+it through run_in_terminal. Reference links retain their document context until final.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.markdown import CodeBlock, Heading, Markdown, Paragraph
 from rich.syntax import Syntax
 from rich.theme import Theme
+from rich.text import Text
 
 
 class _Heading(Heading):
@@ -56,7 +57,10 @@ def render_markdown(source: str, width: int, *, color: bool = True,
     """Share formatting; scrollback lets the terminal soft-wrap top-level prose."""
     from cli import _rich_text_from_ansi, _preserve_windows_dot_segments_for_markdown
 
+    from agent.markdown_tables import realign_markdown_tables
+
     source = _preserve_windows_dot_segments_for_markdown(_rich_text_from_ansi(source).plain)
+    source = realign_markdown_tables(source, max(1, width))
     buf = StringIO()
     console = Console(file=buf, width=max(1, width), height=25, force_terminal=color,
                       color_system="truecolor" if color else None,
@@ -79,7 +83,14 @@ class MarkdownStream:
         with self._lock:
             key = (self.pending, width)
             if self._cache is None or self._cache[0] != key:
-                lines = render_markdown(self.pending, width).splitlines() if self.pending else []
+                if len(self.pending) > 8192:
+                    # A bounded literal tail keeps input responsive for huge unfinished
+                    # fences/lists. Full source still receives Markdown formatting on commit.
+                    buf = StringIO()
+                    Console(file=buf, width=max(1, width)).print(Text("… pending block (tail)\n" + self.pending[-4096:]))
+                    lines = buf.getvalue().splitlines()
+                else:
+                    lines = render_markdown(self.pending, width).splitlines() if self.pending else []
                 self._cache = key, lines
             return self._cache[1]
 
@@ -139,7 +150,19 @@ class MarkdownStream:
     def _stable_prefix(self, source: str) -> int:
         # Keep the last block: a paragraph can turn into a setext heading/table; a list,
         # quote or fence can continue across blank lines. Markdown's parser owns that grammar.
-        tokens = self._parser.parse(source)
+        # Reference definitions are document-wide, including definitions after a use.
+        # Keep that document mutable instead of permanently printing unresolved citations
+        # or discarding definitions needed by later blocks. Code-token brackets are inert.
+        # Very large unfinished blocks also wait for final, avoiding a full parse per token.
+        if len(source) > 8192:
+            return 0
+        env = {}
+        tokens = self._parser.parse(source, env)
+        if env.get("references") or any(
+            child.type == "text" and "[" in child.content
+            for token in tokens for child in (token.children or ())
+        ):
+            return 0
         starts = [t.map[0] for t in tokens if t.level == 0 and t.map and t.nesting != -1]
         if len(starts) < 2:
             return 0

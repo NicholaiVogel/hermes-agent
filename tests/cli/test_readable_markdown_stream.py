@@ -112,3 +112,25 @@ def test_live_worker_preview_input_resize_and_interruption(monkeypatch):
                     app.exit()
                 await task
     asyncio.run(asyncio.wait_for(exercise(), timeout=10))
+
+
+def test_large_pending_block_has_bounded_preview_and_complete_flush(monkeypatch):
+    import hermes_cli.cli_markdown_stream as renderer
+    import cli as facade
+    emitted = []
+    monkeypatch.setattr(facade, "_cprint", emitted.append)
+    cli = make_cli()
+    source = "```python\n" + "print(42)\n" * 1200
+    cli._stream_delta(source)
+    original = renderer.render_markdown
+    def bounded(source, *args, **kwargs):
+        assert len(source) <= 8192
+        return original(source, *args, **kwargs)
+    monkeypatch.setattr(renderer, "render_markdown", bounded)
+    for width in (20, 80):
+        preview = cli._markdown_stream.preview(width)
+        assert "print(42)" in "\n".join(preview)
+        assert all(Text.from_ansi(line).cell_len <= width for line in preview)
+    monkeypatch.setattr(renderer, "render_markdown", original)
+    cli._flush_stream()
+    assert "\n".join(emitted).count("print(42)") == 1200
