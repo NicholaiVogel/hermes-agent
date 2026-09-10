@@ -50,3 +50,7 @@ def test_narrow_table_preserves_values_in_preview_final_and_replay(monkeypatch):
                    render_markdown(source, 20, color=False)]:
         for value in cells:
             assert value in output
+
+    code = "```text\n| A | B |\n| --- | --- |\n| a | b |\n```"
+    assert "| A | B |" in render_markdown(code, 80, color=False)
+    assert "| --- | --- |" in render_markdown(code, 80, color=False)

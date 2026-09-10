@@ -60,7 +60,16 @@ def render_markdown(source: str, width: int, *, color: bool = True,
     from agent.markdown_tables import realign_markdown_tables
 
     source = _preserve_windows_dot_segments_for_markdown(_rich_text_from_ansi(source).plain)
-    source = realign_markdown_tables(source, max(1, width))
+    if "|" in source:
+        # Normalize actual tables only; table-shaped text inside code must stay literal.
+        source_lines = source.splitlines(keepends=True)
+        tables = [token for token in MarkdownIt().enable("table").parse(source)
+                  if token.type == "table_open" and token.level == 0 and token.map]
+        for token in reversed(tables):
+            start, end = token.map
+            block = "".join(source_lines[start:end])
+            source_lines[start:end] = [realign_markdown_tables(block, max(1, width))]
+        source = "".join(source_lines)
     buf = StringIO()
     console = Console(file=buf, width=max(1, width), height=25, force_terminal=color,
                       color_system="truecolor" if color else None,
