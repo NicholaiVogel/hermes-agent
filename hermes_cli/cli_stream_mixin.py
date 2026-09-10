@@ -642,7 +642,11 @@ class CLIStreamMixin:
             self._stream_box_opened = False
         self._close_reasoning_box()
         from agent.display import get_tool_emoji
-        _cprint(f"  ┊ {get_tool_emoji(tool_name, default='⚡')} preparing {tool_name}…")
+        if getattr(self, "final_response_markdown", "strip") == "render":
+            from hermes_cli.cli_tool_activity import print_tool_activity
+            print_tool_activity(f"Preparing {tool_name}…")
+        else:
+            _cprint(f"  ┊ {get_tool_emoji(tool_name, default='⚡')} preparing {tool_name}…")
 
     def _on_tool_progress(self, event_type: str, function_name: str = None, preview: str = None, function_args: dict = None, **kwargs):
         """Tool lifecycle events (tool.started / tool.completed / reasoning.* / moa.*).
@@ -720,7 +724,11 @@ class CLIStreamMixin:
                 try:
                     from agent.display import get_cute_tool_message
                     line = get_cute_tool_message(function_name, stored_args, duration, result=kwargs.get("result"))
-                    _cprint(f"  {line}")
+                    if getattr(self, "final_response_markdown", "strip") == "render":
+                        from hermes_cli.cli_tool_activity import print_tool_activity
+                        print_tool_activity(line, failed=bool(kwargs.get("is_error")))
+                    else:
+                        _cprint(f"  {line}")
                 except Exception:
                     pass
                 # One-time /verbose hint on the first long tool in the noisiest mode; latched

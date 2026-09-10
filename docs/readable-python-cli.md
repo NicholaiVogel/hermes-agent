@@ -28,6 +28,11 @@ when committed, preserving copy/paste as a single logical paragraph. Structured 
 (lists, tables and long code lines) uses Rich's width-aware layout. Source-backed output
 history re-renders at the new width on redraw. `NO_COLOR` remains respected.
 
+Tool activity uses an indented, muted rail on every wrapped line, followed by a blank
+line before assistant prose resumes. Failed tools retain an explicit `Failed` label
+and the skin error color. Tool summaries and durations remain visible; history redraw
+reflows the activity to the current terminal width.
+
 The existing `strip` and `raw` modes retain their old streaming behavior. Set
 `display.final_response_markdown` back to `strip` and restart Hermes to disable this
 renderer. Skin colors and branding remain configurable through the existing skin engine.
