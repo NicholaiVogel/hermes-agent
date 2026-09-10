@@ -10,7 +10,8 @@ def test_user_preview_wraps_before_budget_and_keeps_literal_input(monkeypatch):
     short = '[bold]literal[/bold] **not Markdown**'
     output = render_user_preview(short, 80)
     assert short in output
-    assert 'You' in output
+    assert 'You' not in output
+    assert '╭' in output and '╰' in output
     assert all(span.style.color is None for span in Text.from_ansi(output).spans)
     long = 'First words ' + 'middle words ' * 50 + 'last words'
     output = render_user_preview(long, 40, first=2, last=1, timestamp='12:34')

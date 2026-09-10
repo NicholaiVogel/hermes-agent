@@ -21,7 +21,7 @@ def test_readable_skin_colors_interface_and_errors_without_recoloring_markdown(m
     def colors(text):
         return {span.style.color.get_truecolor().hex for span in Text.from_ansi(text).spans
                 if span.style.color is not None}
-    assert active.get_color('ui_accent').lower() in colors(user)
+    assert active.get_color('input_rule').lower() in colors(user)
     assert active.get_color('banner_dim').lower() in colors(tool)
     assert active.get_color('ui_error').lower() in colors(failed)
     assert 'Failed' in Text.from_ansi(failed).plain

@@ -3,6 +3,8 @@ from io import StringIO
 
 from rich.console import Console
 from rich.text import Text
+from rich.panel import Panel
+from rich import box
 
 
 def _console(width):
@@ -14,22 +16,20 @@ def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
     from hermes_cli.skin_engine import get_active_skin
     skin = get_active_skin()
     console = _console(width)
-    label = Text('You', style='bold ' + skin.get_color('ui_accent', '#aaaaaa'))
-    if timestamp:
-        label.append('  ' + timestamp, style=skin.get_color('banner_dim', '#8B949E'))
-    console.print()
-    console.print(label)
     # Wrap before applying the existing preview budget: one long pasted paragraph
     # must not bypass it. Only the displayed preview is shortened, never model input.
-    rows = list(Text(text).wrap(console, max(1, console.width - 2)))
+    rows = list(Text(text).wrap(console, max(1, console.width - 4)))
     first, last = max(1, first), max(0, last)
     if len(rows) > first + last:
         hidden = len(rows) - first - last
         rows = rows[:first] + [Text(f'… (+{hidden} more lines)',
                                   style=skin.get_color('banner_dim', '#8B949E'))] + (rows[-last:] if last else [])
-    for row in rows:
-        console.print(Text('  ') + row)
-    console.print()
+    body = Text('\n').join(rows)
+    console.print(Panel(
+        body, box=box.ROUNDED, padding=(0, 1),
+        border_style=skin.get_color('input_rule', '#58616A'),
+        style=skin.get_color('banner_text', '#c9d1d9') + ' on ' + skin.get_color('status_bar_bg', '#1F1F1F'),
+        subtitle=Text(timestamp) if timestamp else None, subtitle_align='right'))
     return console.file.getvalue().rstrip('\n') + '\n'
 
 

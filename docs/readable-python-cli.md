@@ -33,7 +33,7 @@ line before assistant prose resumes. Failed tools retain an explicit `Failed` la
 and the skin error color. Tool summaries and durations remain visible; history redraw
 reflows the activity to the current terminal width.
 
-User turns use a small **You** label and literal, regular-weight text at a maximum
+User turns use a quiet rounded border, subtle background and literal, regular-weight text at a maximum
 88-column measure. The existing first/last-line preview settings apply after wrapping,
 so long pasted paragraphs stay compact; full submitted content is unchanged. Successful
 native image routing no longer repeats the attachment count or transport details.
