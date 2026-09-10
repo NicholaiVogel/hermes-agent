@@ -32,12 +32,6 @@ def render_tool_activity(summary: str, width: int, *, failed: bool = False) -> s
 
 
 def print_tool_activity(summary: str, *, failed: bool = False) -> None:
-    from cli import _cprint, _record_output_history_entry, _suspend_output_history
+    from hermes_cli.cli_conversation_display import emit_display_event
 
-    def lines():
-        from cli import _terminal_columns
-        return render_tool_activity(summary, _terminal_columns(), failed=failed).split('\n')
-
-    _record_output_history_entry(lines)
-    with _suspend_output_history():
-        _cprint('\n'.join(lines()))
+    emit_display_event(lambda width: render_tool_activity(summary, width, failed=failed))

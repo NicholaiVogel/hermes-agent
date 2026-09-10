@@ -21,6 +21,8 @@ from rich.syntax import Syntax
 from rich.theme import Theme
 from rich.text import Text
 
+from hermes_cli.markdown_rendering import normalize_source
+
 
 class _Heading(Heading):
     # Rich 14 removed the base class' LEVEL_ALIGN constant; keep our heading
@@ -56,36 +58,19 @@ class _ScrollbackMarkdown(ReadableMarkdown):
 
 def make_markdown(source: str, width: int, *, terminal_wrap: bool = False) -> Markdown:
     """One normalized Rich renderable for final output, streaming and command views."""
-    from cli import _rich_text_from_ansi, _preserve_windows_dot_segments_for_markdown
-
-    from agent.markdown_tables import realign_markdown_tables
-
-    source = _preserve_windows_dot_segments_for_markdown(_rich_text_from_ansi(source).plain)
-    if "|" in source:
-        # Normalize actual tables only; table-shaped text inside code must stay literal.
-        source_lines = source.splitlines(keepends=True)
-        tables = [token for token in MarkdownIt().enable("table").parse(source)
-                  if token.type == "table_open" and token.level == 0 and token.map]
-        for token in reversed(tables):
-            start, end = token.map
-            block = "".join(source_lines[start:end])
-            source_lines[start:end] = [realign_markdown_tables(block, max(1, width))]
-        source = "".join(source_lines)
+    source = normalize_source(source, width)
     markdown = _ScrollbackMarkdown if terminal_wrap else ReadableMarkdown
     return markdown(source, code_theme="github-dark", justify="left", hyperlinks=False)
 
 
 def render_markdown(source: str, width: int, *, color: bool = True,
                     terminal_wrap: bool = False) -> str:
-    from cli import _render_final_assistant_content
-
     buf = StringIO()
     console = Console(file=buf, width=max(1, width), height=25, force_terminal=color,
                       color_system="truecolor" if color else None,
                       theme=Theme({"markdown.h1": "bold", "markdown.h2": "bold",
                                    "markdown.h3": "bold", "markdown.code": "bold cyan"}))
-    console.print(_render_final_assistant_content(
-        source, width=width, terminal_wrap=terminal_wrap), crop=False)
+    console.print(make_markdown(source, width, terminal_wrap=terminal_wrap), crop=False)
     return buf.getvalue().rstrip("\n")
 
 
@@ -102,40 +87,66 @@ def assistant_label(width: int, *, color: bool = True) -> str:
 
 def print_markdown(committed: str, *, live: bool = False, label: bool = False) -> None:
     """Commit complete Markdown without creating live-stream state."""
-    from cli import _cprint, _record_output_history_entry, _suspend_output_history
+    from hermes_cli.cli_conversation_display import emit_display_event
     if committed.strip():
-        def lines(source=committed):
-            from cli import _terminal_columns
-            prefix = assistant_label(_terminal_columns()) + "\n" if label else ""
-            return (prefix + render_markdown(source, _terminal_columns(), terminal_wrap=True) + "\n").split("\n")
-        # Retain source, not width-specific ANSI, so Ctrl+L/resize can reflow it.
-        _record_output_history_entry(lines)
-        with _suspend_output_history():
-            if live:
-                from cli import _pt_print_ansi
-                _pt_print_ansi("\n".join(lines()))
-            else:
-                from cli import _terminal_columns
-                import sys
-                rendered = render_markdown(committed, _terminal_columns(),
-                                           color=sys.stdout.isatty(), terminal_wrap=True)
-                prefix = assistant_label(_terminal_columns(), color=sys.stdout.isatty()) + "\n" if label else ""
-                _cprint(prefix + rendered + "\n")
+        def render(width, source=committed):
+            import sys
+            color = live or sys.stdout.isatty()
+            prefix = assistant_label(width, color=color) + "\n" if label else ""
+            return prefix + render_markdown(source, width, color=color, terminal_wrap=True) + "\n"
+        emit_display_event(render)
+
+
+class MarkdownAccumulator:
+    """Synchronous Markdown boundary tracker; it owns source, pending, and committed blocks."""
+
+    def __init__(self):
+        self.pending = ""
+        self._parser = MarkdownIt().enable("table").enable("strikethrough")
+        self.message_start = True
+
+    def append(self, text: str, *, final: bool = False) -> list[tuple[str, bool]]:
+        self.pending += text
+        cut = len(self.pending) if final else self.stable_prefix(self.pending)
+        committed, self.pending = self.pending[:cut], self.pending[cut:]
+        label = self.message_start
+        if committed.strip():
+            self.message_start = False
+        if final:
+            self.message_start = True
+        return [(committed, label)] if committed.strip() else []
+
+    def stable_prefix(self, source: str) -> int:
+        if len(source) > 8192:
+            return 0
+        env = {}
+        tokens = self._parser.parse(source, env)
+        if env.get("references") or any(
+            child.type == "text" and "[" in child.content
+            for token in tokens for child in (token.children or ())
+        ):
+            return 0
+        starts = [t.map[0] for t in tokens if t.level == 0 and t.map and t.nesting != -1]
+        if len(starts) < 2:
+            return 0
+        return sum(len(line) for line in source.splitlines(keepends=True)[:starts[-1]])
 
 
 class MarkdownStream:
     def __init__(self, cli):
         self.cli = cli
-        self.pending = ""
+        self.accumulator = MarkdownAccumulator()
         self._lock = RLock()
-        self._parser = MarkdownIt().enable("table").enable("strikethrough")
         self._cache = None
         self._operations = asyncio.Lock()
-        self._message_start = True
+
+    @property
+    def pending(self):
+        return self.accumulator.pending
 
     def preview(self, width: int) -> list[str]:
         with self._lock:
-            key = (self.pending, width, self._message_start)
+            key = (self.pending, width, self.accumulator.message_start)
             if self._cache is None or self._cache[0] != key:
                 if len(self.pending) > 8192:
                     # A bounded literal tail keeps input responsive for huge unfinished
@@ -145,7 +156,7 @@ class MarkdownStream:
                     lines = buf.getvalue().splitlines()
                 else:
                     lines = render_markdown(self.pending, width).splitlines() if self.pending else []
-                if self.pending and self._message_start:
+                if self.pending and self.accumulator.message_start:
                     lines = assistant_label(width).splitlines() + lines
                 self._cache = key, lines
             return self._cache[1]
@@ -175,9 +186,7 @@ class MarkdownStream:
                     await run_in_terminal(commit)
                 else:
                     with self._lock:
-                        self.pending = source
-                        if final:
-                            self._message_start = True
+                        self.accumulator.append(text, final=final)
                 app.invalidate()
 
         try:
@@ -191,36 +200,12 @@ class MarkdownStream:
 
     def _update(self, text: str, final: bool, *, live: bool) -> None:
         with self._lock:
-            self.pending += text
-            cut = len(self.pending) if final else self._stable_prefix(self.pending)
-            committed, self.pending = self.pending[:cut], self.pending[cut:]
-            label = self._message_start
-            if committed.strip():
-                self._message_start = False
-            if final:
-                self._message_start = True
-        print_markdown(committed, live=live, label=label)
+            blocks = self.accumulator.append(text, final=final)
+        for committed, label in blocks:
+            print_markdown(committed, live=live, label=label)
 
     def _stable_prefix(self, source: str) -> int:
-        # Keep the last block: a paragraph can turn into a setext heading/table; a list,
-        # quote or fence can continue across blank lines. Markdown's parser owns that grammar.
-        # Reference definitions are document-wide, including definitions after a use.
-        # Keep that document mutable instead of permanently printing unresolved citations
-        # or discarding definitions needed by later blocks. Code-token brackets are inert.
-        # Very large unfinished blocks also wait for final, avoiding a full parse per token.
-        if len(source) > 8192:
-            return 0
-        env = {}
-        tokens = self._parser.parse(source, env)
-        if env.get("references") or any(
-            child.type == "text" and "[" in child.content
-            for token in tokens for child in (token.children or ())
-        ):
-            return 0
-        starts = [t.map[0] for t in tokens if t.level == 0 and t.map and t.nesting != -1]
-        if len(starts) < 2:
-            return 0
-        return sum(len(line) for line in source.splitlines(keepends=True)[:starts[-1]])
+        return self.accumulator.stable_prefix(source)
 
 
 class _PreviewControl(UIControl):

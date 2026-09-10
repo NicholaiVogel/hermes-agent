@@ -46,6 +46,11 @@ from hermes_cli.cli_voice_mixin import CLIVoiceMixin
 from hermes_cli.cli_status_bar_mixin import CLIStatusBarMixin
 from hermes_cli.cli_tui_mixin import CLITuiMixin
 from hermes_cli.cli_process_notifications import CLIProcessNotificationsMixin
+from hermes_cli.markdown_rendering import (
+    preserve_windows_dot_segments as _preserve_windows_dot_segments_for_markdown,
+    rich_text_from_ansi as _rich_text_from_ansi,
+    strip_markdown_syntax as _strip_markdown_syntax,
+)
 from agent.interrupt_compat import request_hard_interrupt
 from agent.pet import render as pet_render
 
@@ -1430,49 +1435,6 @@ def _accent_hex() -> str:
         return "#FFBF00"
 
 
-def _rich_text_from_ansi(text: str) -> _RichText:
-    """Rich Text from ANSI output; literal ``[brackets]`` are not treated as markup."""
-    return _RichText.from_ansi(text or "")
-
-
-def _strip_markdown_syntax(text: str) -> str:
-    """Best-effort markdown marker removal for plain-text display."""
-    plain = _rich_text_from_ansi(text or "").plain
-    # HR markers: "-"/"_" runs of 3+, but "*" only when exactly 3 (cron schedules "* * * * *").
-    plain = re.sub(r"^\s{0,3}(?:[-_]\s*){3,}$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}(?:\*\s*){3}\s*$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}#{1,6}\s+", "", plain, flags=re.MULTILINE)
-    # Blockquotes, lists, and checkboxes are preserved because they carry structure.
-    plain = re.sub(r"(```+|~~~+)", "", plain)
-    plain = re.sub(r"`([^`]*)`", r"\1", plain)
-    plain = re.sub(r"!\[([^\]]*)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\[([^\]]+)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\*\*\*([^*]+)\*\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)___([^_]+)___(?!\w)", r"\1", plain)
-    plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)__([^_]+)__(?!\w)", r"\1", plain)
-    # `*emphasis*` only when the inner text is non-whitespace (cron expressions again).
-    plain = re.sub(r"\*([^\s*][^*]*?[^\s*])\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", plain)
-    plain = re.sub(r"~~([^~]+)~~", r"\1", plain)
-    plain = re.sub(r"\n{3,}", "\n\n", plain)
-    return plain.strip("\n")
-
-
-_WINDOWS_PATH_WITH_DOT_SEGMENT_RE = re.compile(r"(?i)(?:\b[a-z]:\\|\\\\)[^\s`]*\\\.[^\s`]*")
-
-
-def _preserve_windows_dot_segments_for_markdown(text: str) -> str:
-    r"""Double the ``\`` before hidden dirs in Windows paths: CommonMark reads ``\.`` as an escaped dot."""
-    if "\\." not in text:
-        return text
-
-    def _protect(match: re.Match[str]) -> str:
-        return re.sub(r"(?<!\\)\\(?=\.)", r"\\\\", match.group(0))
-
-    return _WINDOWS_PATH_WITH_DOT_SEGMENT_RE.sub(_protect, text)
-
-
 def _terminal_columns() -> int:
     try:
         return shutil.get_terminal_size((80, 24)).columns
@@ -1592,15 +1554,26 @@ def _replay_output_history() -> None:
         _OUTPUT_HISTORY_REPLAYING = False
 
 
-def _pt_print_ansi(text: str) -> None:
+def _pt_print_ansi(text: str, *, color_depth=None) -> None:
     """``_pt_print(ANSI(text))``, falling back to ``print`` when stdout is not a real console."""
     try:
+        if color_depth is None:
+            try:
+                from prompt_toolkit.application import get_app_or_none
+                app = get_app_or_none()
+                if app is not None and getattr(app, "_is_running", False):
+                    color_depth = "DEPTH_24_BIT"
+            except Exception:
+                pass
         # The parent process may intentionally advertise TERM=dumb/NO_COLOR while the
         # interactive TUI still owns a color-capable terminal.  Without an explicit depth,
         # prompt_toolkit parses ANSI but then emits plain text, which turns colored scrollback
         # (including user bands) back into the terminal's default charcoal surface.
         try:
-            _pt_print(_PT_ANSI(text), color_depth="DEPTH_24_BIT")
+            if color_depth is None:
+                _pt_print(_PT_ANSI(text))
+            else:
+                _pt_print(_PT_ANSI(text), color_depth=color_depth)
         except TypeError:
             # Keep compatibility with the lightweight one-argument print doubles used by tests
             # and with older prompt_toolkit versions.

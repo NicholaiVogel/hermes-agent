@@ -1,4 +1,5 @@
-"""Readable user turns and background review notices for the Python CLI."""
+"""Pure readable display formatting plus the single CLI display-event sink."""
+from collections.abc import Callable
 from io import StringIO
 
 from rich.console import Console
@@ -58,12 +59,25 @@ def render_review_notice(text, width):
     return render_notice('Self-improvement review', text.replace(' · ', '\n'), width)
 
 
+def emit_display_event(render: Callable[[int], str]) -> None:
+    """Render one display event, record its source for resize replay, and emit it atomically."""
+    from cli import _cprint, _record_output_history_entry, _suspend_output_history
+
+    def lines():
+        from cli import _terminal_columns
+        return render(_terminal_columns()).split('\n')
+
+    _record_output_history_entry(lines)
+    with _suspend_output_history():
+        _cprint('\n'.join(lines()))
+
+
 def print_notification(cli, label, details):
     """Render routine acknowledgments; callers retain their legacy fallback."""
     if getattr(cli, 'final_response_markdown', 'strip') != 'render':
         return False
     def emit():
-        print_reflowing(lambda width: render_notice(label, details, width))
+        emit_display_event(lambda width: render_notice(label, details, width))
     stream = getattr(cli, '_markdown_stream', None)
     if stream is not None:
         stream.feed('', final=True, after=emit)
@@ -73,13 +87,8 @@ def print_notification(cli, label, details):
 
 
 def print_reflowing(render):
-    from cli import _cprint, _record_output_history_entry, _suspend_output_history
-    def lines():
-        from cli import _terminal_columns
-        return render(_terminal_columns()).split('\n')
-    _record_output_history_entry(lines)
-    with _suspend_output_history():
-        _cprint('\n'.join(lines()))
+    """Compatibility name for callers outside the display-event path."""
+    emit_display_event(render)
 
 
 def print_review_notice(text):
@@ -87,5 +96,5 @@ def print_review_notice(text):
     if not text.strip().startswith(prefix):
         return False
     details = text.strip()[len(prefix):]
-    print_reflowing(lambda width: render_review_notice(details, width))
+    emit_display_event(lambda width: render_review_notice(details, width))
     return True
