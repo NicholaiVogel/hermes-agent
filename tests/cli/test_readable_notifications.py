@@ -38,6 +38,34 @@ def test_busy_acknowledgments_share_quiet_layout_and_preserve_payload(monkeypatc
     assert cli._interrupt_queue.empty()
 
 
+@pytest.mark.parametrize('mode,label', [('queue', 'Queued for next turn'),
+                                        ('steer', 'Steered'),
+                                        ('interrupt', 'Redirected current turn')])
+def test_busy_acknowledgment_flushes_live_assistant_before_notice(monkeypatch, mode, label):
+    import cli as facade
+    emitted = []
+    monkeypatch.setattr(facade, '_cprint', emitted.append)
+    monkeypatch.setattr('agent.onboarding.is_seen', lambda *args: True)
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.final_response_markdown = 'render'
+    cli.show_reasoning = False
+    cli.busy_input_mode = mode
+    cli._pending_input = Queue()
+    cli._interrupt_queue = Queue()
+    cli.agent = SimpleNamespace(
+        steer=lambda text: True,
+        redirect=lambda text: True,
+        _supports_active_turn_redirect=True,
+    )
+    cli._reset_stream_state()
+    cli._stream_delta('Assistant text that must land before the acknowledgment.')
+
+    cli._tui_enter_while_busy('follow-up', [], 'follow-up')
+
+    output = Text.from_ansi('\n'.join(emitted)).plain
+    assert output.index('Assistant text that must land before the acknowledgment.') < output.index(label)
+
+
 def test_slash_queue_and_steer_use_same_layout_without_hiding_failure(monkeypatch):
     import cli as facade
     emitted = []

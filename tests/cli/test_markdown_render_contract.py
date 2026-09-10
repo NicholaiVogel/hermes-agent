@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.text import Text
 
 from cli import HermesCLI, _render_final_assistant_content
-from hermes_cli.cli_markdown_stream import render_markdown
+from hermes_cli.cli_markdown_stream import assistant_label, render_markdown
 
 
 CASES = [
@@ -40,8 +40,9 @@ def test_stream_and_final_renderable_preserve_same_content(monkeypatch, source, 
     buf = StringIO()
     Console(file=buf, width=width, height=25, color_system=None).print(
         _render_final_assistant_content(source, width=width, terminal_wrap=True), crop=False)
-    assert streamed.split() == buf.getvalue().split()
-    assert render_markdown(source, width, color=False, terminal_wrap=True).split() == streamed.split()
+    label = Text.from_ansi(assistant_label(width, color=False)).plain.split()
+    assert streamed.split() == label + buf.getvalue().split()
+    assert label + render_markdown(source, width, color=False, terminal_wrap=True).split() == streamed.split()
     before = list(emitted)
     cli._flush_stream()
     assert emitted == before

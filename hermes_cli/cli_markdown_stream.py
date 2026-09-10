@@ -23,14 +23,16 @@ from rich.text import Text
 
 
 class _Heading(Heading):
-    LEVEL_ALIGN = dict.fromkeys(Heading.LEVEL_ALIGN, "left")
+    # Rich 14 removed the base class' LEVEL_ALIGN constant; keep our heading
+    # alignment override compatible with both the older and newer APIs.
+    LEVEL_ALIGN = dict.fromkeys(range(1, 7), "left")
 
 
 class _CodeBlock(CodeBlock):
     def __rich_console__(self, console, options):
         # No decorative padding: copying code must preserve its original indentation.
         yield Syntax(str(self.text).rstrip("\n"), self.lexer_name, theme=self.theme,
-                     word_wrap=True, padding=0, background_color="default")
+                     word_wrap=True, padding=0, background_color="#20252b")
 
 
 class ReadableMarkdown(Markdown):
@@ -87,13 +89,25 @@ def render_markdown(source: str, width: int, *, color: bool = True,
     return buf.getvalue().rstrip("\n")
 
 
-def print_markdown(committed: str, *, live: bool = False) -> None:
+def assistant_label(width: int, *, color: bool = True) -> str:
+    from hermes_cli.skin_engine import get_active_skin
+    skin = get_active_skin()
+    buf = StringIO()
+    Console(file=buf, width=max(1, width), height=25, force_terminal=color,
+            color_system="truecolor" if color else None).print(Text(
+                skin.get_branding("response_label", "⚕ Hermes").strip(),
+                style=skin.get_color("banner_dim", "#8B949E")))
+    return buf.getvalue().rstrip("\n")
+
+
+def print_markdown(committed: str, *, live: bool = False, label: bool = False) -> None:
     """Commit complete Markdown without creating live-stream state."""
     from cli import _cprint, _record_output_history_entry, _suspend_output_history
     if committed.strip():
         def lines(source=committed):
             from cli import _terminal_columns
-            return (render_markdown(source, _terminal_columns(), terminal_wrap=True) + "\n").split("\n")
+            prefix = assistant_label(_terminal_columns()) + "\n" if label else ""
+            return (prefix + render_markdown(source, _terminal_columns(), terminal_wrap=True) + "\n").split("\n")
         # Retain source, not width-specific ANSI, so Ctrl+L/resize can reflow it.
         _record_output_history_entry(lines)
         with _suspend_output_history():
@@ -105,7 +119,8 @@ def print_markdown(committed: str, *, live: bool = False) -> None:
                 import sys
                 rendered = render_markdown(committed, _terminal_columns(),
                                            color=sys.stdout.isatty(), terminal_wrap=True)
-                _cprint(rendered + "\n")
+                prefix = assistant_label(_terminal_columns(), color=sys.stdout.isatty()) + "\n" if label else ""
+                _cprint(prefix + rendered + "\n")
 
 
 class MarkdownStream:
@@ -115,10 +130,12 @@ class MarkdownStream:
         self._lock = RLock()
         self._parser = MarkdownIt().enable("table").enable("strikethrough")
         self._cache = None
+        self._operations = asyncio.Lock()
+        self._message_start = True
 
     def preview(self, width: int) -> list[str]:
         with self._lock:
-            key = (self.pending, width)
+            key = (self.pending, width, self._message_start)
             if self._cache is None or self._cache[0] != key:
                 if len(self.pending) > 8192:
                     # A bounded literal tail keeps input responsive for huge unfinished
@@ -128,29 +145,40 @@ class MarkdownStream:
                     lines = buf.getvalue().splitlines()
                 else:
                     lines = render_markdown(self.pending, width).splitlines() if self.pending else []
+                if self.pending and self._message_start:
+                    lines = assistant_label(width).splitlines() + lines
                 self._cache = key, lines
             return self._cache[1]
 
-    def feed(self, text: str, *, final: bool = False) -> None:
+    def feed(self, text: str, *, final: bool = False, after=None) -> None:
         """Callbacks arrive from the agent worker; finish printing before it emits tool status."""
         app = getattr(self.cli, "_app", None)
         if app is None or not app.is_running:
             self._update(text, final, live=False)
+            if after is not None:
+                after()
             return
 
         async def update():
             from prompt_toolkit.application import run_in_terminal
-            with self._lock:
-                source = self.pending + text
-                cut = len(source) if final else self._stable_prefix(source)
-            if cut:
-                # Remove the preview and commit it while the layout is hidden.
-                await run_in_terminal(lambda: self._update(text, final, live=True))
-            else:
-                # Tokens only invalidate the existing layout; do not hide/redraw the prompt.
+            # Serialize the entire handoff: UI notifications must not overtake worker
+            # deltas or compute a pending-source snapshot across another commit.
+            async with self._operations:
                 with self._lock:
-                    self.pending = source
-            app.invalidate()
+                    source = self.pending + text
+                    cut = len(source) if final else self._stable_prefix(source)
+                if cut or after is not None:
+                    def commit():
+                        self._update(text, final, live=True)
+                        if after is not None:
+                            after()
+                    await run_in_terminal(commit)
+                else:
+                    with self._lock:
+                        self.pending = source
+                        if final:
+                            self._message_start = True
+                app.invalidate()
 
         try:
             loop = asyncio.get_running_loop()
@@ -166,7 +194,12 @@ class MarkdownStream:
             self.pending += text
             cut = len(self.pending) if final else self._stable_prefix(self.pending)
             committed, self.pending = self.pending[:cut], self.pending[cut:]
-        print_markdown(committed, live=live)
+            label = self._message_start
+            if committed.strip():
+                self._message_start = False
+            if final:
+                self._message_start = True
+        print_markdown(committed, live=live, label=label)
 
     def _stable_prefix(self, source: str) -> int:
         # Keep the last block: a paragraph can turn into a setext heading/table; a list,

@@ -230,6 +230,15 @@ class CLIStreamMixin:
         else:
             ChatConsole().print(f"[bold {_accent_hex()}]●[/] [bold]{_escape(text)}[/]")
 
+    def _on_interim_assistant_message(self, text: str, **kwargs) -> None:
+        """Close a completed message without clearing final-output deduplication flags.
+
+        Later Codex messages can be marked not-already-streamed against cumulative
+        text; local pending state, not that hint, owns what needs committing.
+        """
+        if getattr(self, "_markdown_stream", None) is not None:
+            self._flush_stream()
+
     def _stream_reasoning_delta(self, text: str) -> None:
         """Stream reasoning tokens into a dim box above the response.
 

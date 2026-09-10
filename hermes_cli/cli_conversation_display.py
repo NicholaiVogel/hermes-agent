@@ -16,7 +16,7 @@ def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
     console = _console(width, full_width=True)
     # Wrap before applying the existing preview budget: one long pasted paragraph
     # must not bypass it. Only the displayed preview is shortened, never model input.
-    rows = list(Text(text).wrap(console, max(1, console.width - 2)))
+    rows = list(Text(text).wrap(console, max(1, console.width - 4)))
     first, last = max(1, first), max(0, last)
     if len(rows) > first + last:
         hidden = len(rows) - first - last
@@ -24,10 +24,13 @@ def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
                                   style=skin.get_color('banner_dim', '#8B949E'))] + (rows[-last:] if last else [])
     if timestamp:
         rows.append(Text(timestamp, style=skin.get_color('banner_dim', '#8B949E')))
+    first_row = True
     for row in rows:
         # Generated omission/timestamp rows also need wrapping before background fill.
-        for visual_row in row.wrap(console, max(1, console.width - 2)):
-            band = Text(' ' if console.width > 1 else '', style='#e6e6e6 on #303030')
+        for visual_row in row.wrap(console, max(1, console.width - 4)):
+            prefix = ' ● ' if first_row else '   '
+            first_row = False
+            band = Text(prefix[:max(0, console.width - 1)], style='#e6e6e6 on #303030')
             band.append_text(visual_row)
             band.pad_right(max(0, console.width - band.cell_len))
             console.print(band, overflow='crop')
@@ -55,7 +58,13 @@ def print_notification(cli, label, details):
     """Render routine acknowledgments; callers retain their legacy fallback."""
     if getattr(cli, 'final_response_markdown', 'strip') != 'render':
         return False
-    print_reflowing(lambda width: render_notice(label, details, width))
+    def emit():
+        print_reflowing(lambda width: render_notice(label, details, width))
+    stream = getattr(cli, '_markdown_stream', None)
+    if stream is not None:
+        stream.feed('', final=True, after=emit)
+    else:
+        emit()
     return True
 
 
