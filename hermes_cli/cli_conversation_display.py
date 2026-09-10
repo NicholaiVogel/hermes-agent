@@ -34,17 +34,29 @@ def render_user_preview(text, width, *, first=2, last=2, timestamp=''):
     return console.file.getvalue().rstrip('\n') + '\n'
 
 
-def render_review_notice(text, width):
+def render_notice(label, text, width):
     from hermes_cli.skin_engine import get_active_skin
     color = get_active_skin().get_color('banner_dim', '#8B949E')
     console = _console(width)
-    console.print(Text('  Self-improvement review', style='bold ' + color))
+    console.print(Text('  ' + label, style='bold ' + color))
     # Preserve all action details, with natural wrapping instead of one dense banner.
-    for detail in text.split(' · '):
+    for detail in text.split('\n'):
         for row in Text(detail, style=color).wrap(console, max(1, console.width - 4)):
             console.print(Text('    ', style=color) + row)
     console.print()
     return console.file.getvalue().rstrip('\n') + '\n'
+
+
+def render_review_notice(text, width):
+    return render_notice('Self-improvement review', text.replace(' · ', '\n'), width)
+
+
+def print_notification(cli, label, details):
+    """Render routine acknowledgments; callers retain their legacy fallback."""
+    if getattr(cli, 'final_response_markdown', 'strip') != 'render':
+        return False
+    print_reflowing(lambda width: render_notice(label, details, width))
+    return True
 
 
 def print_reflowing(render):

@@ -522,17 +522,19 @@ class CLIChatTurnMixin:
                     break
             combined = "\n".join(all_parts)
             preview = combined[:50] + ("..." if len(combined) > 50 else "")
-            if len(all_parts) > 1:
-                print(f"\n⚡ Sending {len(all_parts)} messages after interrupt: '{preview}'")
-            else:
-                print(f"\n⚡ Sending after interrupt: '{preview}'")
+            from hermes_cli.cli_conversation_display import print_notification
+            label = f"Sending {len(all_parts)} messages after interrupt" if len(all_parts) > 1 else "Sending after interrupt"
+            if not print_notification(self, label, preview):
+                print(f"\n⚡ {label}: '{preview}'")
             self._pending_input.put(combined)
 
         # A /steer the agent finished before absorbing becomes the next user turn.
         _leftover_steer = turn.result.get("pending_steer") if turn.result else None
         if _leftover_steer:
             preview = _leftover_steer[:60] + ("..." if len(_leftover_steer) > 60 else "")
-            print(f"\n⏩ Delivering leftover /steer as next turn: '{preview}'")
+            from hermes_cli.cli_conversation_display import print_notification
+            if not print_notification(self, "Steering queued for next turn", preview):
+                print(f"\n⏩ Delivering leftover /steer as next turn: '{preview}'")
             self._pending_input.put(_leftover_steer)
 
         return response

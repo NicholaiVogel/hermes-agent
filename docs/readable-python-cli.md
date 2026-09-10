@@ -37,8 +37,10 @@ User turns use a borderless neutral-gray background spanning the terminal width,
 with literal, regular-weight text. The existing first/last-line preview settings apply after wrapping,
 so long pasted paragraphs stay compact; full submitted content is unchanged. Successful
 native image routing no longer repeats the attachment count or transport details.
-Self-improvement review notices use muted, indented details and retain their position
-after any active assistant response.
+Routine queue, steering, redirect and interrupt-carryover acknowledgments share muted
+labels and indented details with self-improvement review notices. Review notices retain
+their position after any active assistant response; input acknowledgments remain immediate.
+Usage hints, failures and warnings keep their existing presentation.
 
 The existing `strip` and `raw` modes retain their old streaming behavior. Set
 `display.final_response_markdown` back to `strip` and restart Hermes to disable this
