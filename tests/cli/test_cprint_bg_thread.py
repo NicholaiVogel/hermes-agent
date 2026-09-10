@@ -45,6 +45,20 @@ def test_cprint_no_app_direct_print(monkeypatch):
     assert calls == [("pt_print", ("ANSI", "hello"))]
 
 
+def test_cprint_requests_truecolor_for_ansi_scrollback(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_pt_print", lambda value, **kwargs: calls.append((value, kwargs)))
+    monkeypatch.setattr(cli, "_PT_ANSI", lambda t: ("ANSI", t))
+
+    fake_pt_app = types.ModuleType("prompt_toolkit.application")
+    fake_pt_app.get_app_or_none = lambda: None
+    monkeypatch.setitem(sys.modules, "prompt_toolkit.application", fake_pt_app)
+
+    cli._cprint("colored")
+
+    assert calls == [(('ANSI', 'colored'), {"color_depth": "DEPTH_24_BIT"})]
+
+
 def test_cprint_app_not_running_direct_print(monkeypatch):
     """App exists but not running (e.g. teardown) → direct print."""
     calls = []

@@ -1582,10 +1582,10 @@ def _replay_output_history() -> None:
                     continue
                 if isinstance(lines, str):
                     lines = lines.splitlines()
-            rendered_lines.extend(str(line) for line in lines)
+        rendered_lines.extend(str(line) for line in lines)
         if rendered_lines:
             # One payload: per-line pt prints each force a sync redraw (a waterfall of old output).
-            _pt_print(_PT_ANSI("\n".join(rendered_lines)))
+            _pt_print_ansi("\n".join(rendered_lines))
     except Exception:
         pass
     finally:
@@ -1595,7 +1595,16 @@ def _replay_output_history() -> None:
 def _pt_print_ansi(text: str) -> None:
     """``_pt_print(ANSI(text))``, falling back to ``print`` when stdout is not a real console."""
     try:
-        _pt_print(_PT_ANSI(text))
+        # The parent process may intentionally advertise TERM=dumb/NO_COLOR while the
+        # interactive TUI still owns a color-capable terminal.  Without an explicit depth,
+        # prompt_toolkit parses ANSI but then emits plain text, which turns colored scrollback
+        # (including user bands) back into the terminal's default charcoal surface.
+        try:
+            _pt_print(_PT_ANSI(text), color_depth="DEPTH_24_BIT")
+        except TypeError:
+            # Keep compatibility with the lightweight one-argument print doubles used by tests
+            # and with older prompt_toolkit versions.
+            _pt_print(_PT_ANSI(text))
     except Exception:
         # NoConsoleScreenBufferError (Windows) / OSError when stdout is e.g. a worker log file.
         with suppress(Exception):
@@ -1640,7 +1649,7 @@ def _cprint(text: str):
     except Exception:
         current_loop = None
     if loop is None or (current_loop is loop and loop.is_running()):
-        _pt_print(_PT_ANSI(text))
+        _pt_print_ansi(text)
         return
 
     def _schedule():
@@ -1649,7 +1658,7 @@ def _cprint(text: str):
         # Never fall back to a bare print on error: the sync path already printed.
         with suppress(Exception):
             import inspect as _inspect
-            coro = run_in_terminal(lambda: _pt_print(_PT_ANSI(text)))
+            coro = run_in_terminal(lambda: _pt_print_ansi(text))
             if coro is not None and (_inspect.isawaitable(coro) or _inspect.iscoroutine(coro)):
                 _asyncio.ensure_future(coro)
 
