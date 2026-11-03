@@ -1754,12 +1754,12 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                     session_key or "?", exc_info=True,
                 )
             next_message = await self._prepare_profile_scoped_inbound_message_text(
-                event=pending_event, source=next_source, history=updated_history, session_key=next_session_key,
+                event=pending_event, source=next_source, history=updated_history, session_key=next_session_key, delivery_path="queued",
             )
             if next_message is None:
                 return result
-            from gateway.run_inbound import strip_discord_triggering_note
-            next_persist_message = strip_discord_triggering_note(pending_event, next_message)
+            from gateway.message_context import strip_discord_triggering_note, message_context_for_transcript
+            next_persist_message = message_context_for_transcript(pending_event, strip_discord_triggering_note(pending_event, next_message))
             next_message_id = self._reply_anchor_for_event(pending_event)
             next_inbound_id = str(pending_event.message_id) if getattr(pending_event, "message_id", None) else None
             next_channel_prompt, next_source = self._pinned_channel_inputs(

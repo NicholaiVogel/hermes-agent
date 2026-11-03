@@ -108,6 +108,8 @@ class SessionSource:
     # (gateway/session_detached.py). It replaces the chat's key, so nothing keyed by route reaches
     # the chat's current conversation, and delivery goes nowhere.
     detached_route: Optional[str] = field(default=None, repr=False, compare=False)
+    # Account handle (Discord ``User.name``), distinct from the mutable ``user_name`` display name.
+    user_username: Optional[str] = None
 
     def __post_init__(self) -> None:
         # Mirror scope_id/guild_id onto each other (scope_id wins) so readers of EITHER agree.
@@ -136,7 +138,7 @@ class SessionSource:
     _ALWAYS_FIELDS = ("chat_id", "chat_name", "chat_type", "user_id", "user_name", "thread_id", "chat_topic")
     _OPTIONAL_PRE_SCOPE = ("user_id_alt", "chat_id_alt")
     _OPTIONAL_POST_SCOPE = ("parent_chat_id", "message_id", "profile")
-    _OPTIONAL_TAIL = ("auto_thread_initial_name", "prospective_thread_id")
+    _OPTIONAL_TAIL = ("auto_thread_initial_name", "prospective_thread_id", "user_username")
 
     def to_dict(self) -> dict[str, Any]:
         d = {"platform": self.platform.value}

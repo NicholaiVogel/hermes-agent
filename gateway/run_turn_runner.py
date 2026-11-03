@@ -953,11 +953,11 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         )
         if resume_pending and (interruption_is_fresh or mark_is_fresh):
             # Empty message = the startup auto-resume turn; there is no NEW user message.
-            ctx.message, persist_override = _prepare_resume_pending_message(
-                resume_reason, ctx.message, interactive=self._resume_note_interactive(),
-            )
+            ctx.message, recovery_persist = _prepare_resume_pending_message(
+                resume_reason, ctx.message, interactive=self._resume_note_interactive())
+            persist_override = persist_override or recovery_persist
         elif agent_history and agent_history[-1].get("role") == "tool" and interruption_is_fresh:
-            persist_override = ctx.message
+            persist_override = persist_override if persist_override is not None else ctx.message
             ctx.message = (
                 "[System note: A new message has arrived. The conversation "
                 "history contains pending tool outputs from an interrupted turn. "

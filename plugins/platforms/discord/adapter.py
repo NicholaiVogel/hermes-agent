@@ -1172,6 +1172,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 from plugins.platforms.discord.adapter_media import DiscordMediaMixin
 from plugins.platforms.discord.adapter_opus import load_opus_codec
 from plugins.platforms.discord.adapter_authorization import DiscordAuthorizationMixin
+from plugins.platforms.discord.adapter_provenance import reply_metadata
 from plugins.platforms.discord.adapter_slash_auth import DiscordSlashAuthMixin
 from plugins.platforms.discord.adapter_thread_titles import DiscordThreadTitlesMixin, SemanticThreadRenames
 from plugins.platforms.discord.adapter_voice_info import DiscordVoiceInfoMixin
@@ -4790,6 +4791,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
             guild_id=self._interaction_guild_id(interaction), parent_chat_id=parent_id or None,
             role_authorized=self._slash_role_grant(interaction),
         )
+        source.user_username = getattr(interaction.user, "name", None) or None
         msg_type = MessageType.COMMAND if text.startswith("/") else MessageType.TEXT
         channel_id = str(interaction.channel_id)
         return MessageEvent(
@@ -4845,6 +4847,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
             guild_id=self._interaction_guild_id(interaction), parent_chat_id=_parent_id or None,
             role_authorized=self._slash_role_grant(interaction),
         )
+        source.user_username = getattr(interaction.user, "name", None) or None
         _skills = self._resolve_channel_skills(thread_id, _parent_id or None)
         _channel_prompt = self._resolve_channel_prompt(thread_id, _parent_id or None)
         event = MessageEvent(
@@ -6234,6 +6237,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
                 or self._derive_auto_thread_name(message.content or "")
             ) if auto_threaded_channel is not None else None,
         )
+        source.user_username = getattr(message.author, "name", None) or None
         media_urls, media_types, media_text_inlined, pending_text_injection = await self._collect_attachment_media(
             all_attachments)
         event_text = normalized_content
@@ -6273,19 +6277,13 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
         _chan_id = str(getattr(_chan, "id", ""))
         _skills = self._resolve_channel_skills(_chan_id, _parent_id or None)
         _channel_prompt = self._resolve_channel_prompt(_chan_id, _parent_id or None)
-        reply_to_id = None
-        reply_to_text = None
-        if message.reference:
-            reply_to_id = str(message.reference.message_id)
-            if message.reference.resolved:
-                reply_to_text = getattr(message.reference.resolved, "content", None) or None
+        reply_author = reply_metadata(message.reference, getattr(self._client, "user", None))
         event = MessageEvent(
             text=event_text, message_type=msg_type, source=source, raw_message=message,
             message_id=str(message.id), media_urls=media_urls, media_types=media_types,
             media_text_inlined=media_text_inlined,
-            reply_to_message_id=reply_to_id, reply_to_text=reply_to_text,
             timestamp=message.created_at, auto_skill=_skills, channel_prompt=_channel_prompt,
-            channel_context=_channel_context,
+            channel_context=_channel_context, **reply_author,
         )
         if (
             getattr(getattr(message, "author", None), "bot", False)

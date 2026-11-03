@@ -567,6 +567,15 @@ class GatewayBusySessionMixin:
         )
         return (enriched_text or text).strip() if successful_transcripts else text
 
+    async def _prepare_busy_message_context(self, text: str, event: MessageEvent) -> str:
+        """Attach this event's context before the native steering-origin wrapper."""
+        if not text.strip():
+            return text
+        from gateway.message_context import collect_message_context
+        with self._profile_scope_for_source(event.source):
+            plugin_context = await collect_message_context(event, event.source, "steer")
+        return f"{plugin_context}\n\n{text}" if plugin_context else text
+
     def _steer_text_with_origin(self, text: str, event: MessageEvent) -> str:
         """Keep event origin in this injection, never in the cached system prompt."""
         if not text.strip():
@@ -744,6 +753,7 @@ class GatewayBusySessionMixin:
                 len(self._pending_event_audio_paths(event)) == len(_steer_media_urls)
             )
             if steer_text and (plain_text or _steer_all_voice) and agent_live and hasattr(running_agent, "steer"):
+                steer_text = await self._prepare_busy_message_context(steer_text, event)
                 steered = self._try_agent_verb(
                     running_agent, "steer", steer_text, session_key, event=event
                 )
@@ -756,8 +766,9 @@ class GatewayBusySessionMixin:
             and getattr(running_agent, "_supports_active_turn_redirect", False) is True
             and hasattr(running_agent, "redirect")
         ):
+            redirect_text = await self._prepare_busy_message_context((event.text or "").strip(), event)
             redirected = self._redirect_active_turn(
-                running_agent, (event.text or "").strip(), session_key, event
+                running_agent, redirect_text, session_key, event
             )
         return self._BusySteerOutcome(
             effective_mode=effective_mode, demoted_for_subagents=demoted_for_subagents,
@@ -1220,6 +1231,7 @@ class GatewayBusySessionMixin:
                 reply_to_message_id=event.reply_to_message_id, reply_to_text=event.reply_to_text,
                 reply_to_author_id=event.reply_to_author_id,
                 reply_to_author_name=event.reply_to_author_name,
+                reply_to_author_username=event.reply_to_author_username,
                 reply_to_is_own_message=event.reply_to_is_own_message, auto_skill=event.auto_skill,
                 channel_prompt=event.channel_prompt, channel_context=event.channel_context,
                 internal=event.internal, timestamp=event.timestamp,
@@ -1248,6 +1260,11 @@ class GatewayBusySessionMixin:
                 text=steer_text, message_type=MessageType.TEXT, source=event.source,
                 message_id=event.message_id, channel_prompt=event.channel_prompt,
                 channel_context=event.channel_context, edit_revision=event.edit_revision,
+                reply_to_message_id=event.reply_to_message_id, reply_to_text=event.reply_to_text,
+                reply_to_author_id=event.reply_to_author_id,
+                reply_to_author_name=event.reply_to_author_name,
+                reply_to_author_username=event.reply_to_author_username,
+                reply_to_is_own_message=event.reply_to_is_own_message,
             ), adapter, reply):
                 return None  # its commit sends the reply
             return reply
@@ -1257,7 +1274,8 @@ class GatewayBusySessionMixin:
         if not running_agent or not hasattr(running_agent, "steer"):
             return await _queue_fallback(t("gateway.steer.queued_no_agent"))
         try:
-            accepted = self._steer_running_agent(running_agent, self._steer_text_with_origin(steer_text, event))
+            enriched = await self._prepare_busy_message_context(steer_text, event)
+            accepted = self._steer_running_agent(running_agent, self._steer_text_with_origin(enriched, event))
         except Exception as exc:
             logger.warning("Steer failed for session %s: %s", quick_key, exc)
             return t("gateway.steer.failed", error=exc)

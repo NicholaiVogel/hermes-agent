@@ -485,6 +485,7 @@ Payload fields below are the exact event-specific fields supplied by each call s
 | `subagent_stop` | Observer | Child exit; return ignored. | `parent_session_id`, `parent_turn_id`, `child_session_id`, `child_role`, `child_summary`, `child_status`, `tool_call_history`, `duration_ms` | Summary and redacted tool-history metadata may reveal project structure. |
 | `pre_gateway_dispatch` | Directive/control | Once per incoming non-internal message, at ingress: platform-adapter messages before auth/pairing/dispatch; webhook and relay deliveries after their authorization, before the admission commits; never for local CLI/TUI/Desktop or API turns, a retry of a committed delivery, or a queued admission when it executes. First valid `skip`, `rewrite`, or `allow` controls flow. | `event`, `gateway`, `session_store` | Extremely privileged in-process objects expose inbound user/routing data and host handles. |
 | `post_gateway_admission` | Directive/control (fail-open) | Admitted non-internal message after auth, pause/drain, pending-reply, running-session and slash-command lanes, inside the claimed session slot and the routed profile's scope; first `handled` result skips the agent turn, anything else (including a raise or timeout) runs it. | `session_key`, `platform`, `source` (dict snapshot), `message_id`, `text` | Inbound text is untrusted user data; no runner or session-store handles are passed. |
+| `gateway_message_context` | Context (fail-open) | Per message while preparing a normal (`delivery_path="turn"`) or queued (`"queued"`) turn and per busy steer/redirect (`"steer"`), including internal events (`internal=True`); non-empty context results are attached to that message only. Never consumes or controls the message. | `platform`, `source` (dict), `message_id`, `internal`, `delivery_path`, optional `session_key`, optional `reply_to` (`message_id`, `user_id`, `display_name`, `username`) | Body-free: no message text, SDK objects or host handles. Returned context is model-visible, not authored transcript text; escape untrusted names. |
 | `gateway_platform_event` | Observer | After the gateway's profile-scoped authorization succeeds, when a supported platform-native event is normalized at the gateway boundary (Telegram: reactions, message edits; Discord: message edits/deletes, thread created/renamed); return ignored. | `platform`, `event_type`, `payload` (event-type-specific dict — see the per-event contracts below) | Normalized plain-dict envelope only; raw SDK objects, adapter handles, and bot clients are never exposed. |
 | `pre_command` | Observer | Recognized slash command about to be dispatched, before the handler runs, on CLI and gateway cold-path dispatch; return ignored in v1 (directive-shaped dicts are logged at debug). A command the classic CLI, TUI or Desktop sends to the gateway through `slash.exec` or `command.dispatch` fires it once, in the gateway, with `surface` and `platform` both `"cli"` as before (Ink and Desktop fired it through the CLI slash worker) and `session_key` the session id. A recognized command the classic CLI runs itself is reported to the gateway (`command.observe`) once it has run, and so are these TUI commands: `/help`, `/history`, `/clear`, `/new`, `/tools` (not `enable`/`disable`), `/usage` and `/reasoning` (a level once the gateway accepts it). The gateway fires it there after replying, so neither client loads plugin code; a command either client refuses fires nothing. This is a deliberate change from the classic CLI before the unified gateway, which fired it for every recognized command just before dispatch: now a command fires it only if it runs, so one that is refused or that the client has no handler for (`/handoff` in a gateway session, `/start`) fires nothing. A TUI change the gateway applies, such as `/reasoning high`, fires it once the gateway accepts the change, so after the change has taken effect. A gateway older than the client fires no hook for those commands (the classic CLI prints a one-time notice). Known gap: Desktop's own pickers, actions and dedicated RPCs (commands it answers without `slash.exec`) fire nothing yet, and neither do the other commands the TUI answers itself or through a dedicated gateway call, such as `/title`, `/undo`, `/retry`, `/model`, `/compress`, `/branch`, `/save`, `/copy`, `/queue`, `/steer`, `/bg`, `/btw`, `/skin`, `/yolo`, `/busy`, `/fast`, `/verbose`, `/rollback`, `/reload-mcp`, `/quit` and `/reasoning --global`. During a local session's turn every command that still runs fires it except `/stop`, `/approve` and `/deny`; a command that is refused (rejected while busy, or named as unavailable on the gateway) fires nothing. Each callback is timeout-bounded (`plugins.hook_callback_timeout`); each delivery waits on a thread of its own, never a worker shared with other sessions or the event loop's executor. One session's commands reach it in order, and a callback still running for that session (hung) is skipped for its later commands instead of running out of order, without holding up other sessions. Gateway running-agent intercept commands (`/stop`, `/approve` during an active run) are deliberately excluded — control-plane escape hatches must stay outside plugin reach. | `surface` (`"cli"` \| `"gateway"`), `command` (canonical name), `alias_used`, `args_raw`, `session_key`, `platform` | `args_raw` may contain user content or secrets typed after the command. |
 | `pre_approval_request` | Observer | Before prompted or smart approval; return ignored. | `command`, `description`, `pattern_key`, `pattern_keys`, `session_key`, `surface`, `turn_id`, `tool_call_id` | Command may contain secrets; smart observer preparation force-redacts, but surfaces do not all have identical redaction. |
@@ -1423,6 +1424,37 @@ def register(ctx):
 ```
 
 ---
+
+### `gateway_message_context`
+
+Fires when an authorized gateway event becomes model-visible text, after command dispatch and context-reference expansion. The normal inbound and recursive queued-follow-up paths share this hook. Busy steering and active-turn redirects call it for their own event before the existing origin wrapper is applied.
+
+```python
+def context_for_message(platform, source, message_id, internal, delivery_path,
+                        session_key=None, reply_to=None, **kwargs):
+    if platform != "discord" or internal:
+        return None
+    return {"context": render_provenance(source, message_id, reply_to), "persist": True}
+
+def register(ctx):
+    ctx.register_hook("gateway_message_context", context_for_message)
+```
+
+The payload is a plain snapshot, not an SDK message or host handle:
+
+| Field | Meaning |
+|---|---|
+| `platform` | Platform identifier. |
+| `source` | `SessionSource.to_dict()` snapshot, including the sender ID, display name and optional `user_username` account handle. Names, topics and labels are untrusted data. |
+| `message_id` | The event's message ID, falling back to the source ID. |
+| `internal` | Whether the event is synthetic. Do not label an internal notification as authored by a routed conversation participant. |
+| `delivery_path` | `turn`, `queued`, or `steer` (including an active-turn redirect). |
+| `session_key` | Present when supplied by the turn-preparation caller. |
+| `reply_to` | Optional snapshot containing the referenced `message_id` and any resolved author `user_id`, `display_name` and `username`. Missing authors remain unknown. No quoted body is included. |
+
+Return `None`, a nonempty string, or `{"context": "..."}`. Nonempty results are joined and attached to this message only; no control action or reply routing directive is interpreted. Raw command text, attachment lists and the cached system prompt are unchanged. A dict result with `"persist": True` also retains that exact context in ordinary/queued transcript `content`, alongside the user's words, for audits, exports and downstream ingestion. Only the boolean `True` opts in. Other context remains API-only; its exact generated suffix is removed using a process-local event receipt, not by parsing user-written markers. Replay retains the recorded bytes rather than regenerating old context. Busy injections retain their native origin wrapper.
+
+Async callbacks are awaited on the gateway loop and are bounded by `plugins.hook_callback_timeout`; they may wait for other work on that loop without stalling unrelated chats. Synchronous callbacks are supported but run inline under the existing asynchronous hook-dispatch contract, so they must remain nonblocking. Callback exceptions and asynchronous callback timeouts fail open, preserving ordinary message handling. Caller cancellation still cancels preparation. The payload contains routing/identity data but no message body; consumers must not promote display names or quoted labels into instructions or permissions.
 
 ### `post_gateway_admission`
 

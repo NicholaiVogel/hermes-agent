@@ -53,25 +53,8 @@ _RELAY_MEDIA_PREFIX = "relay_media_"
 _UNKNOWN_ATTACHMENT_NAME = "(original filename unknown)"
 
 
-def discord_triggering_note(message_id: Any) -> str:
-    """Model-facing routing note for a Discord turn (rides the API-bound user message only)."""
-    return (
-        f"[Triggering message id: `{message_id}` — use as `message_id` for reply/react/pin "
-        f"via the discord tools.]"
-    )
-
-
-def strip_discord_triggering_note(event: Any, message_text: Any) -> Any:
-    """Authored text for the durable user row: peel off exactly the note
-    ``_prepend_inbound_reply_context`` added for THIS event, if present. The note is a
-    model instruction, not something the user wrote — persisted as ``content`` it renders
-    verbatim in every transcript surface and pollutes FTS/memory (#71304, #114719). It
-    keeps riding ``message_text`` (and the replay-only ``api_content`` sidecar)."""
-    message_id = getattr(event, "message_id", None)
-    if not message_id or not isinstance(message_text, str):
-        return message_text
-    prefix = f"{discord_triggering_note(message_id)}\n\n"
-    return message_text.removeprefix(prefix)
+# Defined in gateway.message_context (local provenance hook); re-exported for upstream importers.
+from gateway.message_context import discord_triggering_note, strip_discord_triggering_note
 
 
 class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionMixin, GatewayPluginInjectionMixin):
@@ -764,13 +747,14 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
     def _hm_text_only(event: MessageEvent) -> bool:
         return event.message_type == MessageType.TEXT and not event.media_urls and not event.media_types
 
-    def _hm_busy_steer(self, event: MessageEvent, running_agent: Any, _quick_key: str) -> None:
+    async def _hm_busy_steer(self, event: MessageEvent, running_agent: Any, _quick_key: str) -> None:
         """Steer mode: inject text mid-run via ``agent.steer()``, else fall back to queue semantics."""
         steer_text = (event.text or "").strip()
         steered = False
         if self._hm_text_only(event) and steer_text and hasattr(running_agent, "steer"):
             try:
-                steered = self._steer_running_agent(running_agent, self._steer_text_with_origin(steer_text, event))
+                enriched = await self._prepare_busy_message_context(steer_text, event)
+                steered = self._steer_running_agent(running_agent, self._steer_text_with_origin(enriched, event))
             except Exception as exc:
                 logger.warning("PRIORITY steer failed for session %s: %s", _quick_key, exc)
         if steered:
@@ -789,7 +773,8 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         # runtime supports it; media/voice and older runtimes use the interrupt path below.
         _can_redirect = getattr(running_agent, "_supports_active_turn_redirect", False) is True
         if self._hm_text_only(event) and _can_redirect and hasattr(running_agent, "redirect"):
-            if self._redirect_active_turn(running_agent, (event.text or "").strip(), _quick_key, event):
+            redirect_text = await self._prepare_busy_message_context((event.text or "").strip(), event)
+            if self._redirect_active_turn(running_agent, redirect_text, _quick_key, event):
                 logger.debug("PRIORITY redirect for session %s", _quick_key)
                 return
         logger.debug("PRIORITY interrupt for session %s", _quick_key)
@@ -876,7 +861,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             self._queue_or_replace_pending_event(_quick_key, event)
             return None
         if effective_busy_input_mode == "steer":
-            self._hm_busy_steer(event, running_agent, _quick_key)
+            await self._hm_busy_steer(event, running_agent, _quick_key)
             return None
         # Subagent protection: an interrupt cascades through ``_active_children`` and aborts
         # in-flight delegate_task work (/stop reached its handler above — still an escape hatch).
@@ -1719,6 +1704,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         ):
             from gateway.session import _discord_tools_loaded as _disc_tools_loaded
             if _disc_tools_loaded():
+                from gateway.message_context import discord_triggering_note
                 message_text = f"{discord_triggering_note(event.message_id)}\n\n{message_text}"
         return message_text
 
@@ -1797,7 +1783,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
 
     async def _prepare_inbound_message_text(
         self, *, event: MessageEvent, source: SessionSource, history: list[dict[str, Any]],
-        session_key: Optional[str] = None,
+        session_key: Optional[str] = None, delivery_path: str = "turn",
     ) -> Optional[str]:
         """Prepare inbound event text for the agent. Shared by the normal inbound and queued
         follow-up paths so attribution, image enrichment, STT, document notes, reply context and
@@ -1827,15 +1813,22 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             return None
         # After expansion: the quoted reply is someone else's text and stays literal — an
         # ``@file:`` inside it must never read a local file on the replier's behalf.
+        from gateway.message_context import collect_message_context
+        event._gateway_message_context_suffix = None
+        _plugin_ctx = await collect_message_context(event, source, delivery_path, session_key)
+        if _plugin_ctx:
+            event._gateway_message_context_suffix = f"\n\n{_plugin_ctx}"
+            message_text += event._gateway_message_context_suffix
         return self._prepend_inbound_reply_context(event, source, message_text)
 
     async def _prepare_profile_scoped_inbound_message_text(
         self, *, event: MessageEvent, source: SessionSource, history: list[dict[str, Any]],
-        session_key: Optional[str] = None,
+        session_key: Optional[str] = None, delivery_path: str = "turn",
     ) -> Optional[str]:
         """Run inbound preprocessing under the routed profile when multiplexed."""
         from gateway.run import _async_profile_runtime_scope
-        kwargs = dict(event=event, source=source, history=history, session_key=session_key)
+        kwargs: dict[str, Any] = dict(event=event, source=source, history=history, session_key=session_key,
+                                      delivery_path=delivery_path)
         if getattr(getattr(self, "config", None), "multiplex_profiles", False):
             async with _async_profile_runtime_scope(self._resolve_profile_home_for_source(source)):
                 return await self._prepare_inbound_message_text(**kwargs)
